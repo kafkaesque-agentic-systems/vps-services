@@ -1,4 +1,4 @@
-# Architecture Guide — ThirdEye Quotes Platform & MCP Engine
+# Architecture Guide — api.thirdeye.live VPS services platform
 
 This document is the definitive onboarding reference for the **services** repository: a Docker-orchestrated micro-services stack that powers the **ThirdEye Quotes API** (`api.thirdeye.live`) and a companion **Model Context Protocol (MCP) server** exposed over HTTPS + Server-Sent Events (SSE). All descriptions below are derived from the repository's source code, Docker/NGINX configuration, and operational scripts.
 
