@@ -1,0 +1,31 @@
+# .dockerignore — keeps the Docker build context small and clean (Audit O-4).
+#
+# Everything listed here is excluded from the context sent to the daemon, which
+# means smaller/faster builds and — importantly — a much lower chance of
+# accidentally baking secrets, docs, or reference infra into an image layer.
+# Only the Go module (source, go.mod, go.sum) actually needs to reach the build.
+
+# Version control metadata — never needed inside an image.
+.git
+.gitignore
+
+# Documentation and reference material — irrelevant to the compiled binary.
+*.md
+vps-docs/
+
+# Build/deploy descriptors — these configure the host, not the image, and would
+# otherwise invalidate the build cache on every infra edit.
+Dockerfile
+.dockerignore
+docker-compose.yml
+nginx.conf
+
+# Locally compiled binaries — the image must ONLY ever contain the binary built
+# hermetically inside the builder stage, never a stale host-built artifact.
+# (Patterns are anchored to the context root, so cmd/server source is unaffected.)
+server
+mcp-server
+bin/
+
+# Local deploy ledgers (push_codebase audit logs) — never bake into an image.
+deploy_ledgers/

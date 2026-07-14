@@ -1,0 +1,249 @@
+body {
+  color: #fff;
+  font-family: "Optima", sans-serif;
+  background: radial-gradient(black 15%, transparent 16%) 0 0,
+              radial-gradient(black 15%, transparent 16%) 8px 8px,
+              radial-gradient(rgba(255,255,255,.1) 15%, transparent 20%) 0 1px,
+              radial-gradient(rgba(255,255,255,.1) 15%, transparent 20%) 8px 9px;
+  background-color:#212121;
+  background-size:16px 16px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+pre {
+    padding-left: 5px;
+    padding-right: 5px;
+}
+
+blockquote {
+    padding: 10px 5px;
+    display: inline-block;
+    border-radius: 25px;
+}
+
+blockquote p {
+  display: inline;
+}
+
+.flex-container {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.singleCol {
+   margin: 2em auto;
+}
+
+.btn {
+  width: 100% !important;
+  background-color: #222222;
+}
+
+.btn:focus {
+	outline: 0;
+  	box-shadow:
+    	0 0 0 .2rem #fff,
+    	0 0 0 .35rem #069;
+}
+
+.btn:focus:not(.focus-visible) {
+  outline: 0;
+  box-shadow: none;
+}
+
+.btn-go {
+  background-image: linear-gradient(to right, #222222 0%, #333333  51%, #222222  100%);
+  transition: 0.5s;
+  background-size: 200% auto;
+}
+
+.btn-go:hover {
+  background-position: right center; /* change the direction of the change here */
+  color: #fff;
+  text-decoration: none;
+}
+
+.navbar-brand {
+	padding-left: 2em;
+}
+
+.response-container {
+	height: 250px;
+	margin-top: 2em;
+	margin-bottom: 2em;
+	overflow: hidden;
+	display: flex;
+	justify-content: center;
+}
+
+.quote-container {
+	max-height: 100%;
+	margin-top: 2em;
+	margin-bottom: 2em;
+  display: flex;
+  justify-content: center;
+}
+
+.response-data {
+	color: #fff;
+  height: 95%;
+  width: 95%;
+  font-size: 1em;
+  padding: 1em;
+  overflow-wrap: break-word;
+  overflow: auto;
+	border: solid;
+	border-width: thin;
+	border-radius: 15px;
+  background-color:#222222;
+}
+
+.random-quote {
+  font-family: 'Cormorant Garamond', serif;
+  font-size: 1.5em;
+  text-align: center;
+  margin: auto;
+  line-height: 1.2;
+	text-rendering: optimizeLegibility;
+	font-smoothing: antialiased;
+	-webkit-font-smoothing: antialiased;
+	-moz-osx-fon-smoothing: grayscale;
+}
+
+.info {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 20px;
+}
+
+.code-block {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background-color: rgb(36, 36, 36, 0.85);
+/*  padding: 20px;*/
+  border-radius: 5px;
+  text-align: left;
+  box-shadow: 2px 2px 10px rgba(0, 0, 0, 0.1);
+}
+
+#algo-font {
+  font-family: 'Source Code Pro', monospace;
+}
+
+.copy-cmd-btn {
+  width: 25% !important;
+  background-image: linear-gradient(to right, #222222 0%, #333333  51%, #222222  100%);
+  transition: 0.5s;
+  background-size: 200% auto;
+  padding: 0% 10%;
+}
+
+.copy-cmd-btn:hover {
+  background-position: right center; /* change the direction of the change here */
+  color: #fff;
+  text-decoration: none;
+}
+
+.endpoints {
+   font-size: 0.90em;
+}
+
+.captcha {
+	text-align: center;
+	display: inline-block;
+	font-size: 0.90em;
+	color: red;
+	margin-bottom: 1em;
+}
+
+/*---Buttons---*/
+
+#deleteQuote {
+	margin-top: 1em;
+}
+
+#allQuotes {
+
+}
+
+/*---media queries---*/
+
+/*small mobile devices*/
+@media screen and (max-width: 320px) {
+  pre {
+    font-size: 10px;
+    padding-left: 2px;
+    padding-right: 2px;
+  }
+
+  .long-curl {
+    font-size: 7px;
+  }
+}
+
+@media only screen and (min-width: 321px) and (max-width: 385px) {
+  pre {
+    font-size: 11px;
+    padding-left: 2px;
+    padding-right: 2px;
+  }
+
+  .long-curl {
+    font-size: 7.5px;
+  }
+}
+
+@media only screen and (min-width: 386px) and (max-width: 427px) {
+  pre {
+    font-size: 12px;
+    padding-left: 3px;
+    padding-right: 3px;
+  }
+
+  .long-curl {
+    font-size: 8.5px;
+  }
+}
+
+@media only screen and (min-width: 428px) and (max-width: 474px) {
+ pre {
+    font-size: 13px;
+    padding-left: 3px;
+    padding-right: 3px;
+  }
+
+  .long-curl {
+    font-size: 9px;
+  } 
+}
+
+@media only screen and (min-width: 475px) and (max-width: 549px) {
+   pre {
+    font-size: 14px;
+    padding-left: 4px;
+    padding-right: 4px;
+  }
+
+  .long-curl {
+    font-size: 10px;
+  }
+}
+
+@media only screen and (min-width: 550px) and (max-width: 767px) {
+  pre {
+    font-size: 15px;
+    padding-left: 4px;
+    padding-right: 4px;
+  }
+
+  .long-curl {
+    font-size: 11px;
+  }
+}

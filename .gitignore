@@ -1,0 +1,64 @@
+# ----------------------------------------------------------------------------
+# Custom Project Rules
+# ----------------------------------------------------------------------------
+
+# Environment configurations
+.environs
+
+# Cursor IDE rules
+.cursorrules
+
+# Local deployment artifacts (migrated from services/) (push_codebase rsync ledgers)
+deploy_ledgers/
+
+# Security: Ignore private keys explicitly!
+*.pem
+
+/services/vol/
+
+# ----------------------------------------------------------------------------
+# Go Artifacts
+# ----------------------------------------------------------------------------
+# Ignore compiled binaries (like the 'server' binary in mcp-server)
+/services/mcp-server/server
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binaries profiling, and coverage reports
+*.test
+*.out
+*.prof
+coverage.txt
+c.out
+
+# Go workspace files (these are for local development and shouldn't be committed)
+go.work
+go.work.sum
+
+# ----------------------------------------------------------------------------
+# Python / Flask Artifacts
+# ----------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+
+# ----------------------------------------------------------------------------
+# OS Generated Files
+# ----------------------------------------------------------------------------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db

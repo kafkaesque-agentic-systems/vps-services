@@ -1,0 +1,201 @@
+# =============================================================================
+# COMPOSITE docker-compose.yml  (generated for the Custom-VPS-MCP-Engine)
+# =============================================================================
+#
+# This file is a NEW, composite descriptor generated from the existing ops
+# stack at vps-docs/docker-compose.yml. The reference file was NOT modified.
+#
+# Preserved from the reference:
+#   * The `quotes` bridge network and its 172.255.255.0/24 subnet.
+#   * The reverse-proxy, web, api, and dbs services (with their static IPs).
+#   * The external `quotes-api` volume.
+#
+# NEW / CHANGED in this composite:
+#   * The `go-mcp` service — our MCP server — at static IP 172.255.255.6, with a
+#     /healthz healthcheck and CPU/memory limits.
+#   * reverse-proxy now waits for go-mcp to become HEALTHY (not merely started).
+#
+# The obsolete top-level `version:` key has been dropped (Audit O-3); the modern
+# Compose Specification infers the schema and warns if `version` is present.
+#
+# Design decision — NO host port mapping for go-mcp:
+#   The MCP server is reachable only through Nginx over the internal network (by
+#   static IP). Not publishing a host port (a) avoids colliding with the `api`
+#   service's host 8080 binding, and (b) ensures the engine is reachable only via
+#   TLS + the bearer-token gate. Defense in depth.
+# =============================================================================
+
+services:
+  reverse-proxy:
+    image: nginx:latest
+    restart: always
+    container_name: quotes-proxy
+    # Long-form depends_on so we can express health conditions (Audit C-3).
+    # The proxy must not start routing to go-mcp until it reports HEALTHY,
+    # otherwise early /sse requests would hit a not-yet-listening upstream.
+    depends_on:
+      web:
+        condition: service_started
+      api:
+        condition: service_started
+      go-mcp:
+        condition: service_healthy
+    volumes:
+      - /etc/ssl:/etc/ssl:ro
+      # The composite nginx.conf generated in this phase should be placed at
+      # this mount source (./prx/nginx.conf) on the VPS.
+      - ./prx/nginx.conf:/etc/nginx/nginx.conf
+      - ./prx/image:/usr/share/nginx/html/image:ro
+    ports:
+      - "80:80"
+      - "443:443"
+    networks:
+      quotes:
+        ipv4_address: 172.255.255.5
+
+  web:
+    image: quotes-frontend:latest
+    container_name: quotes-frontend
+    build:
+      context: ./web
+    # restart: on-failure
+    environment:
+      - MAILSERVER
+      - MAILPASS
+      - AUTHORIZED
+      - MONGO_INITDB_ROOT_PASSWORD
+      - MONGO_INITDB_ROOT_USERNAME
+    links:
+      - api
+    depends_on:
+      - api
+    volumes:
+      - /etc/ssl:/etc/ssl:ro
+    ports:
+      - "5000:5000"
+    networks:
+      quotes:
+        ipv4_address: 172.255.255.4
+
+  api:
+    image: quotes-server:latest
+    container_name: quotes-server
+    build:
+      context: ./api
+    # restart: on-failure
+    environment:
+      - MONGO_INITDB_ROOT_PASSWORD
+      - MONGO_INITDB_ROOT_USERNAME
+      - MONGO_DATABASE
+      - ADMIN_ID
+    links:
+      - dbs
+    depends_on:
+      - dbs
+    volumes:
+      - /etc/ssl:/etc/ssl:ro
+    ports:
+      - "8080:8080"
+    networks:
+      quotes:
+        ipv4_address: 172.255.255.3
+
+  dbs:
+    image: mongo:4.4.18
+    container_name: quotes-database
+    # restart: always
+    environment:
+      - MONGO_INITDB_ROOT_PASSWORD
+      - MONGO_INITDB_ROOT_USERNAME
+    ports:
+      - "27017:27017"
+    networks:
+      quotes:
+        ipv4_address: 172.255.255.2
+    volumes:
+      - quotes-api:/data/db
+
+  # ---------------------------------------------------------------------------
+  # NEW SERVICE: go-mcp — the Custom-VPS-MCP-Engine
+  # ---------------------------------------------------------------------------
+  go-mcp:
+    build:
+      context: ./mcp-server
+      dockerfile: Dockerfile
+    image: go-mcp:latest
+    container_name: go-mcp
+    restart: always
+    environment:
+      # Container-internal listen port only; not published to the host.
+      - PORT=8080
+      # Injected from the host environment / .env at deploy time so the shared
+      # secret never lives in source control. The auth middleware fails closed
+      # (HTTP 500) until this is set.
+      - MCP_SECRET_TOKEN
+      # ------------------------------------------------------------------
+      # Database skill (native MongoDB tools). All passed BY REFERENCE from
+      # the host .env / .environs — values never live in source control.
+      #
+      # PREFERRED credentials: the dedicated least-privilege `mcp_agent`
+      # MongoDB user (readWrite on qdb + tarotdb only). Creation runbook:
+      # ARCHITECTURE.md → "MCP database skill".
+      - MCP_MONGO_USERNAME
+      - MCP_MONGO_PASSWORD
+      # FALLBACK credentials (same pair the api service uses). If the
+      # MCP_MONGO_* pair is unset the skill falls back to these and logs a
+      # WARNING about running with root.
+      - MONGO_INITDB_ROOT_USERNAME
+      - MONGO_INITDB_ROOT_PASSWORD
+      # Application database name (default qdb when unset) — selects the
+      # database half of the qdata/users/tokens namespaces.
+      - MONGO_DATABASE
+      # FAIL-CLOSED write switch: db_insert/db_update/db_delete and
+      # user_provision/user_revoke are registered ONLY when this is exactly
+      # "true". Leave unset for a read-only database skill.
+      - MCP_DB_ALLOW_WRITES
+    # Internal-only exposure for the reverse-proxy; no host publish.
+    expose:
+      - "8080"
+    # Healthcheck (Audit C-3): the reverse-proxy's `service_healthy` gate keys on
+    # this. It probes the unauthenticated /healthz endpoint from inside the
+    # container. start_period gives the process time to bind before failures count.
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    # Resource limits (Audit P-3): cap CPU and memory so a runaway or abusive
+    # client cannot exhaust host resources and OOM neighboring services.
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 256M
+    # Host bind mounts for snapshot_create / snapshot_restore: read-write access
+    # to the live services tree and the snapshots directory. Ensure both paths
+    # are writable by the container's mcp user (see mcp-server/README.md).
+    # Docker socket: required for system_down / system_up / system_logs.
+    # Replace DOCKER_GID with the host docker group GID (getent group docker).
+    group_add:
+      - "${DOCKER_GID:-999}"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /opt/micro-services.d/services:/opt/micro-services.d/services:rw
+      - /opt/micro-services.d/snapshots:/opt/micro-services.d/snapshots:rw
+    networks:
+      quotes:
+        # Next free address after reverse-proxy (.5). Nginx proxies /sse and
+        # /message to this exact IP:port.
+        ipv4_address: 172.255.255.6
+
+networks:
+  quotes:
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.255.255.0/24
+
+volumes:
+  quotes-api:
+    external: true
