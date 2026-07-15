@@ -34,6 +34,8 @@ func TestBuildTarArgs(t *testing.T) {
 		"-czf", "/tmp/out.tar.gz",
 		"--exclude=image",
 		"--exclude=vol",
+		"--exclude=snapshots", // prevents recursive self-archiving (nested store)
+		"--exclude=.bak-*",    // pre-restore backups must not snowball into archives
 		"-C", "/opt/source",
 		".",
 	}
@@ -71,6 +73,14 @@ func TestCreateSnapshotAt(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(sourceDir, "vol", "data.bin"), []byte("bin"), 0o644); err != nil {
 		t.Fatalf("write vol/data.bin: %v", err)
 	}
+	// Post-migration layout: the snapshot store lives inside the source tree
+	// and must NEVER be swallowed into an archive (recursive growth).
+	if err := os.Mkdir(filepath.Join(sourceDir, "snapshots"), 0o755); err != nil {
+		t.Fatalf("mkdir snapshots: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sourceDir, "snapshots", "old.tar.gz"), []byte("gz"), 0o644); err != nil {
+		t.Fatalf("write snapshots/old.tar.gz: %v", err)
+	}
 
 	archivePath, err := createSnapshotAt(context.Background(), sourceDir, destDir)
 	if err != nil {
@@ -98,7 +108,7 @@ func TestCreateSnapshotAt(t *testing.T) {
 	if !strings.Contains(listing, "./main.go") && !strings.Contains(listing, "main.go") {
 		t.Errorf("archive listing missing main.go; listing=%q", listing)
 	}
-	if strings.Contains(listing, "image/") || strings.Contains(listing, "vol/") {
+	if strings.Contains(listing, "image/") || strings.Contains(listing, "vol/") || strings.Contains(listing, "snapshots/") {
 		t.Errorf("archive listing contains excluded directory; listing=%q", listing)
 	}
 }
@@ -139,8 +149,8 @@ func TestHandleSnapshotCreateSuccess(t *testing.T) {
 	if !strings.Contains(text, "archive:") {
 		t.Errorf("success text = %q, want archive path", text)
 	}
-	if !strings.Contains(text, "excluded: image, vol") {
-		t.Errorf("success text = %q, want exclusion list", text)
+	if !strings.Contains(text, "excluded: image, vol, snapshots, .bak-*") {
+		t.Errorf("success text = %q, want full exclusion list incl. snapshots and .bak-*", text)
 	}
 }
 

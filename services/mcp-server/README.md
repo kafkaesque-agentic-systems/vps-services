@@ -158,7 +158,7 @@ Tools are namespaced `<domain>_<action>` and registered in skill packages under 
 
 ### `snapshot_create`
 
-> Creates a gzip-compressed tar archive of the VPS services codebase at `/opt/micro-services.d/services`, writing the snapshot to `/opt/micro-services.d/snapshots/`. Excludes the top-level `image` and `vol` directories. **Takes no arguments.** Intended for use before major AI-driven changes.
+> Creates a gzip-compressed tar archive of the VPS codebase at `/opt/micro-services.d`, writing the snapshot to `/opt/micro-services.d/snapshots/`. Excludes the top-level `image`, `vol`, and `snapshots` directories plus `.bak-*` restore backups — the `snapshots` exclusion is **correctness, not economy**: the store is nested inside the source tree (2026-07-14 layout migration) and would otherwise recursively swallow every prior archive. **Takes no arguments.** Intended for use before major AI-driven changes.
 
 - **Input schema:** `SnapshotInput{}` (empty struct → object with no properties).
 - **Handler:** [`handleSnapshotCreate`](internal/skills/snapshot/snapshot.go) — invokes `tar` via `os/exec` with fixed paths (no shell).
@@ -167,34 +167,38 @@ Tools are namespaced `<domain>_<action>` and registered in skill packages under 
 
   ```
   status: ok
-  archive: /opt/micro-services.d/snapshots/snapshot-2026-07-12_11-38-00.tar.gz
-  source: /opt/micro-services.d/services
-  excluded: image, vol
-  created_at_utc: 2026-07-12T16:38:00Z
+  archive: /opt/micro-services.d/snapshots/snapshot-2026-07-14_11-38-00.tar.gz
+  source: /opt/micro-services.d
+  excluded: image, vol, snapshots, .bak-*
+  created_at_utc: 2026-07-14T16:38:00Z
   ```
 
   > ⚠️ **Deployment dependency:** the `go-mcp` container must bind-mount the host paths (see [Section 8.2](#82-compose-stack)) and both directories must be writable by the container's `mcp` user.
 
 ### `snapshot_restore`
 
-> Restores the VPS services codebase from a snapshot archive in `/opt/micro-services.d/snapshots/` into `/opt/micro-services.d/services`. **Requires the `filename` argument** (archive basename only).
+> Restores the VPS codebase from a snapshot archive in `/opt/micro-services.d/snapshots/` into `/opt/micro-services.d`. **Requires the `filename` argument** (archive basename only).
 
-- **Input schema:** `RestoreInput{ Filename string }` — required basename such as `snapshot-2026-07-12_12-00-00.tar.gz`.
-- **Handler:** [`handleSnapshotRestore`](internal/skills/snapshot/restore.go) — validates archive, renames active `services` to `services.bak-<timestamp>`, extracts with `tar -xzf`, rolls back on failure.
-- **Failsafe:** On extraction error, removes partial `services/` and renames `services.bak-*` back to `services`.
+- **Input schema:** `RestoreInput{ Filename string }` — required basename such as `snapshot-2026-07-14_12-00-00.tar.gz`.
+- **Handler:** [`handleSnapshotRestore`](internal/skills/snapshot/restore.go) — **contents-swap** failsafe: moves the tree's top-level entries into `.bak-<timestamp>` *inside* the tree (the root is the container's bind-mount point and cannot be renamed — `EBUSY`), keeps top-level excluded entries (`snapshots/`, `vol/`) in place, extracts with `tar -xzf`, then **reclaims nested excluded assets** (e.g. `prx/image/` — swapped out with their parent but absent from archives) back into the restored tree; rolls back on extraction failure. Reclaim issues surface as warnings in the tool output, never as failures — the assets remain safe inside the backup.
+- **Failsafe:** On extraction error, removes partially extracted entries and moves the originals back; the rollback **never touches the snapshots store**, so archives cannot be destroyed.
+- **Compatibility:** archives created before the 2026-07-14 layout migration (codebase under `services/`) are **not** restorable onto the new layout.
 - **Sample text output:**
 
   ```
   status: ok
-  restored_from: /opt/micro-services.d/snapshots/snapshot-2026-07-12_12-00-00.tar.gz
-  services_dir: /opt/micro-services.d/services
-  previous_services_backup: /opt/micro-services.d/services.bak-2026-07-12_12-05-00
-  restored_at_utc: 2026-07-12T17:05:00Z
+  restored_from: /opt/micro-services.d/snapshots/snapshot-2026-07-14_12-00-00.tar.gz
+  codebase_dir: /opt/micro-services.d
+  previous_contents_backup: /opt/micro-services.d/.bak-2026-07-14_12-05-00
+  snapshots_store_preserved: /opt/micro-services.d/snapshots
+  reclaimed_excluded_assets: prx/image
+  restored_at_utc: 2026-07-14T17:05:00Z
+  note: prune old .bak-* backup directories manually once the restore is verified
   ```
 
 ### `system_down`
 
-> Gracefully stops the micro-services stack via **`docker compose down`** in `/opt/micro-services.d/services`. **Does not remove Docker volumes** — the MongoDB `quotes-api` volume and all persistent data are preserved. Takes no arguments.
+> Gracefully stops the micro-services stack via **`docker compose down`** in `/opt/micro-services.d`. **Does not remove Docker volumes** — the MongoDB `quotes-api` volume and all persistent data are preserved. Takes no arguments.
 
 - **Input schema:** `DownInput{}` (empty struct).
 - **Command executed:** `docker compose down` — strictly **no** `-v` or `--volumes` flag (hardcoded safeguard in Go).
@@ -202,7 +206,7 @@ Tools are namespaced `<domain>_<action>` and registered in skill packages under 
 
 ### `system_up`
 
-> Starts the stack via `docker compose up -d` in `/opt/micro-services.d/services`, loading environment variables from `.environs` (parsed in Go, not via shell `source`).
+> Starts the stack via `docker compose up -d` in `/opt/micro-services.d`, loading environment variables from `/opt/micro-services.d/.environs` (parsed in Go, not via shell `source`).
 
 - **Input schema:** `UpInput{ Build bool }` — optional `build: true` adds `--build`.
 - **Commands:** `docker compose up -d` or `docker compose up -d --build`.
@@ -227,11 +231,11 @@ Tools are namespaced `<domain>_<action>` and registered in skill packages under 
   | `DEPLOY_SSH_TARGET` | SSH destination (`user@host`) — **required** |
   | `MCP_SECRET_TOKEN` | Bearer token for pre-flight production MCP — **required** |
   | `DEPLOY_LOCAL_ROOT` | Local repo root (default: auto-detect `docker-compose.yml` upward from cwd) |
-  | `DEPLOY_REMOTE_PATH` | Remote sync root (default: `/opt/micro-services.d/services/`) |
+  | `DEPLOY_REMOTE_PATH` | Remote sync root (default: `/opt/micro-services.d/`) |
   | `DEPLOY_MCP_URL` | Production MCP SSE URL (default: `https://api.thirdeye.live/sse`) |
 
 - **Rsync flags:** `-a`, `-z`, `--delete`, `-i`, `--log-file=deploy_ledgers/deploy-YYYY-MM-DD_HH-MM-SS.log`, `-e "ssh -o BatchMode=yes"` (non-interactive SSH — fails fast instead of hanging on a password prompt); the whole sync is bounded by a 30-minute timeout
-- **Exclusions:** `.git/`, `node_modules/`, `.venv/`, `__pycache__/`, `.env`, `.environs`, `image/`, `vol/`, `deploy_ledgers/`
+- **Exclusions (also shielded from `--delete`):** `.git/`, `node_modules/`, `.venv/`, `__pycache__/`, `.env`, `.environs`, `image/`, `vol/`, `snapshots/`, `.bak-*`, `deploy_ledgers/` — the `snapshots/` and `.bak-*` entries are **load-bearing**: both live inside the sync root since the 2026-07-14 layout migration and would otherwise be erased by `--delete` on the first push
 - **Itemized ledger legend:** `>f+++++++++` new file; `>f..T......` updated file; `cd+++++++++` new directory; `*deleting` stale remote path removed
 - **Sample local dev invocation:**
 
@@ -413,7 +417,7 @@ These are read **only** when `push_codebase` runs on a locally started mcp-serve
 | :--- | :--- | :--- | :--- | :--- |
 | `DEPLOY_SSH_TARGET` | string (`user@host`) | *(none)* | SSH destination for rsync. | **Yes** (for push) |
 | `DEPLOY_LOCAL_ROOT` | filesystem path | auto-detect `docker-compose.yml` | Local repository root synced to the VPS. | No |
-| `DEPLOY_REMOTE_PATH` | filesystem path | `/opt/micro-services.d/services/` | Remote sync destination on the VPS. | No |
+| `DEPLOY_REMOTE_PATH` | filesystem path | `/opt/micro-services.d/` | Remote sync destination on the VPS. | No |
 | `DEPLOY_MCP_URL` | HTTPS URL | `https://api.thirdeye.live/sse` | Production MCP SSE endpoint for pre-flight `snapshot_create`. | No |
 
 ### 5.5 Co-located reference-stack variables (NOT this engine)
@@ -557,7 +561,8 @@ go test -race -run TestHandleTime ./internal/skills/system/...
 | [`internal/skills/snapshot/snapshot_test.go`](internal/skills/snapshot/snapshot_test.go) | `TestCreateSnapshotAt` | Creates a temp-dir archive via `tar`, verifies `main.go` is included and `image/` + `vol/` are excluded. |
 | [`internal/skills/snapshot/snapshot_test.go`](internal/skills/snapshot/snapshot_test.go) | `TestHandleSnapshotCreateMissingSource` | When the default VPS source path is absent, handler returns `IsError: true` with a **`nil` Go error**. |
 | [`internal/skills/snapshot/restore_test.go`](internal/skills/snapshot/restore_test.go) | `TestRestoreSnapshotRoundTrip` | Creates archive, modifies tree, restores, verifies content and backup dir. |
-| [`internal/skills/snapshot/restore_test.go`](internal/skills/snapshot/restore_test.go) | `TestRestoreSnapshotAtRollbackOnBadArchive` | Corrupt archive triggers rollback; original `services` content preserved. |
+| [`internal/skills/snapshot/restore_test.go`](internal/skills/snapshot/restore_test.go) | `TestRestoreSnapshotAtRollbackOnBadArchive` | Corrupt archive triggers rollback; original content preserved. |
+| [`internal/skills/snapshot/restore_test.go`](internal/skills/snapshot/restore_test.go) | `TestRestoreSnapshotNestedStoreRoundTrip`, `TestRestoreSnapshotNestedStoreRollback`, `TestNestedSnapshotsTopComponent` | The PRODUCTION post-migration layout: the snapshots store nested inside the codebase root survives a contents-swap restore untouched (archive stays at its original path), the `.bak-<ts>` backup lands inside the tree, and rollback returns everything — including the store — without ever deleting an archive. |
 | [`internal/skills/docker/lifecycle_test.go`](internal/skills/docker/lifecycle_test.go) | `TestValidateComposeProjectDir`, `TestSystemUpAtRequiresEnvirons`, `TestTruncateOutput` | Compose project/compose-file validation, hard `.environs` requirement for `system_up`, and output truncation for the memory-limited container. |
 | [`internal/skills/docker/environs_test.go`](internal/skills/docker/environs_test.go) | `TestParseEnvirons*`, `TestValidateComposeService*`, `TestHandleSystemLogsInvalidService`, `TestComposeDownArgsNeverRemoveVolumes` | `.environs` parsing (comments, quotes, malformed lines), service allowlist + **deterministic sorted error text**, self-healing invalid-service result, and the **hard guarantee that `system_down` can never carry `-v`/`--volumes`/`--rmi`** (asserted against the production `composeDownArgs` function). |
 | [`internal/skills/deploy/deploy_test.go`](internal/skills/deploy/deploy_test.go) | `TestBuildRsyncArgs`, `TestLedgerPathFormat`, `TestResolveDeployConfig*`, `TestDetectLocalRoot`, `TestBearerRoundTripper`, `TestEnsureTrailingSlash` | rsync flag/exclusion construction (including the non-interactive `ssh -o BatchMode=yes` transport), ledger naming, required/default `DEPLOY_*` env resolution, repo-root auto-detection, and Bearer-token injection for the pre-flight SSE client. |
@@ -660,9 +665,8 @@ The composite [`../docker-compose.yml`](../docker-compose.yml) (parent repo root
 - **No host port mapping** for `go-mcp` — it is reachable *only* via Nginx over the internal docker network (avoids colliding with the `api` service on host `8080`, and forces all access through TLS + the bearer gate).
 - `MCP_SECRET_TOKEN` is passed **by reference** (`- MCP_SECRET_TOKEN`), so the value is injected from the host environment / `.env` and never lives in source control.
 - `reverse-proxy.depends_on` includes `go-mcp` so Nginx starts after the engine.
-- **Host bind mounts** for snapshot and lifecycle tools:
-  - `/opt/micro-services.d/services:/opt/micro-services.d/services:rw`
-  - `/opt/micro-services.d/snapshots:/opt/micro-services.d/snapshots:rw`
+- **Host bind mount** for snapshot and lifecycle tools (single mount since the 2026-07-14 layout migration — the codebase root now directly contains the compose project, `.environs`, and the nested `snapshots/` store):
+  - `/opt/micro-services.d:/opt/micro-services.d:rw`
   - `/var/run/docker.sock:/var/run/docker.sock`
 - **`group_add`:** set `DOCKER_GID` in `.env` to the host docker group GID (`getent group docker | cut -d: -f3`)
 
@@ -670,12 +674,12 @@ Before first use of snapshot/lifecycle tools on the VPS:
 
 ```bash
 sudo mkdir -p /opt/micro-services.d/snapshots
-# Copy or symlink .environs into /opt/micro-services.d/services/.environs
+# Copy or symlink .environs into /opt/micro-services.d/.environs
 docker compose up -d go-mcp
 MCP_UID=$(docker compose exec -T go-mcp id -u mcp)
 MCP_GID=$(docker compose exec -T go-mcp id -g mcp)
+sudo chown "${MCP_UID}:${MCP_GID}" /opt/micro-services.d
 sudo chown "${MCP_UID}:${MCP_GID}" /opt/micro-services.d/snapshots
-sudo chown "${MCP_UID}:${MCP_GID}" /opt/micro-services.d/services
 sudo chmod 750 /opt/micro-services.d/snapshots
 export DOCKER_GID=$(getent group docker | cut -d: -f3)
 docker compose up -d go-mcp

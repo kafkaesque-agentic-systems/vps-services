@@ -10,8 +10,9 @@
 //
 // # Compose project
 //
-// All commands execute with working directory /opt/micro-services.d/services,
-// which must contain docker-compose.yml and .environs on the VPS host.
+// All commands execute with working directory /opt/micro-services.d (the
+// codebase root since the 2026-07-14 layout migration), which must contain
+// docker-compose.yml and .environs on the VPS host.
 //
 // # Infrastructure requirements
 //

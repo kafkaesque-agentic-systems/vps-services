@@ -40,6 +40,13 @@ const (
 // rsyncExcludes lists path patterns omitted from every push_codebase sync.
 // These protect secrets, local-only artifacts, persistent VPS runtime data,
 // and the local deployment ledger directory itself.
+//
+// CRITICAL — snapshots/: since the 2026-07-14 layout migration the VPS
+// snapshot store lives INSIDE the sync root (/opt/micro-services.d/snapshots).
+// The local checkout has no snapshots directory, so WITHOUT this exclusion
+// rsync --delete would erase every snapshot archive on the VPS on the very
+// first push. An excluded path is protected from --delete as well as from
+// transfer; never remove this entry while the store lives inside the root.
 var rsyncExcludes = []string{
 	".git/",
 	"node_modules/",
@@ -49,6 +56,8 @@ var rsyncExcludes = []string{
 	".environs",
 	"image/",
 	"vol/",
+	"snapshots/",
+	".bak-*", // pre-restore backups created by snapshot_restore inside the VPS tree
 	"deploy_ledgers/",
 }
 

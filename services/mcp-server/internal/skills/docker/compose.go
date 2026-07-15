@@ -12,7 +12,9 @@ import (
 
 const (
 	// defaultComposeProjectDir is the VPS directory containing docker-compose.yml.
-	defaultComposeProjectDir = "/opt/micro-services.d/services"
+	// LAYOUT MIGRATION (2026-07-14): the codebase moved from
+	// /opt/micro-services.d/services up to /opt/micro-services.d itself.
+	defaultComposeProjectDir = "/opt/micro-services.d"
 
 	// defaultEnvironsPath is co-located with the compose project on the VPS.
 	defaultEnvironsPath = defaultComposeProjectDir + "/.environs"

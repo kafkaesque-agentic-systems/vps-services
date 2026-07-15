@@ -36,6 +36,9 @@
 //
 // rsync runs with --delete so files absent locally are removed on the VPS
 // (stale code cleanup). Persistent runtime data is protected by exclusions:
-// image/, vol/, .env, .environs, and local-only artifacts (.git/, node_modules/,
-// .venv/, __pycache__/, deploy_ledgers/).
+// image/, vol/, snapshots/, .env, .environs, and local-only artifacts (.git/,
+// node_modules/, .venv/, __pycache__/, deploy_ledgers/). The snapshots/
+// exclusion is load-bearing: since the 2026-07-14 layout migration the VPS
+// snapshot store lives inside the sync root (/opt/micro-services.d/snapshots)
+// and would otherwise be erased by --delete on every push.
 package deploy

@@ -14,7 +14,12 @@ const (
 	envDeployMCPURL     = "DEPLOY_MCP_URL"
 	envMCPSecretToken   = "MCP_SECRET_TOKEN"
 
-	defaultRemotePath = "/opt/micro-services.d/services/"
+	// defaultRemotePath is the rsync destination root on the VPS.
+	// LAYOUT MIGRATION (2026-07-14): the codebase moved from
+	// /opt/micro-services.d/services/ up to /opt/micro-services.d/ itself.
+	// The snapshots store now lives INSIDE this root — protected from
+	// --delete by the snapshots/ entry in rsyncExcludes (rsync.go).
+	defaultRemotePath = "/opt/micro-services.d/"
 	defaultMCPURL     = "https://api.thirdeye.live/sse"
 
 	composeMarker = "docker-compose.yml"

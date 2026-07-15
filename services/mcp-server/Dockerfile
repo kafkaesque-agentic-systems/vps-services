@@ -73,11 +73,15 @@ FROM alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6
 #                      the IANA timezone database, which Alpine omits by default.
 #   wget            -> provided by BusyBox in the base image; used by the
 #                      HEALTHCHECK below. (No extra install needed; noted for clarity.)
-#   tar             -> also provided by BusyBox; used by snapshot_create to archive
-#                      the VPS services tree.
+#   tar             -> GNU tar, installed EXPLICITLY (shadows BusyBox tar):
+#                      snapshot_create/restore correctness depends on
+#                      well-defined --exclude semantics at any path depth
+#                      (image, vol, snapshots, .bak-*); GNU tar's unanchored
+#                      component matching is documented and stable, BusyBox's
+#                      is not.
 #   docker-cli      -> docker compose lifecycle tools (system_down/up/logs).
 #   docker-cli-compose -> Compose v2 plugin required by `docker compose`.
-RUN apk add --no-cache ca-certificates tzdata docker-cli docker-cli-compose
+RUN apk add --no-cache ca-certificates tzdata tar docker-cli docker-cli-compose
 
 # Run as a non-root, unprivileged user to limit blast radius if compromised.
 RUN addgroup -S mcp && adduser -S -G mcp -H -s /sbin/nologin mcp

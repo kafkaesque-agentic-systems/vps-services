@@ -292,12 +292,12 @@ Expose MCP tools to LLM clients over HTTP + SSE:
 | `system_health` | Process uptime, Go version, goroutine count, UTC time |
 | `system_time` | Current time with optional IANA timezone |
 | `quote_random` | Fetches a random quote from `https://api.thirdeye.live/quote` |
-| `snapshot_create` | Archives `/opt/micro-services.d/services` to `/opt/micro-services.d/snapshots/snapshot-YYYY-MM-DD_HH-MM-SS.tar.gz`, excluding `image` and `vol` |
-| `snapshot_restore` | Restores a named archive from `/opt/micro-services.d/snapshots/` into `/opt/micro-services.d/services` with failsafe backup rename and rollback |
-| `system_down` | Runs `docker compose down` in `/opt/micro-services.d/services` — **never removes volumes** (MongoDB data preserved) |
-| `system_up` | Runs `docker compose up -d` (optional `--build`), loading env from `.environs` |
+| `snapshot_create` | Archives `/opt/micro-services.d` to `/opt/micro-services.d/snapshots/snapshot-YYYY-MM-DD_HH-MM-SS.tar.gz`, excluding `image`, `vol`, `snapshots` (the nested store itself), and `.bak-*` restore backups |
+| `snapshot_restore` | Restores a named archive from `/opt/micro-services.d/snapshots/` into `/opt/micro-services.d` via a **contents-swap** (backup into `.bak-<ts>` inside the tree) with automatic rollback |
+| `system_down` | Runs `docker compose down` in `/opt/micro-services.d` — **never removes volumes** (MongoDB data preserved) |
+| `system_up` | Runs `docker compose up -d` (optional `--build`), loading env from `/opt/micro-services.d/.environs` |
 | `system_logs` | Static `docker compose logs --tail N` snapshot (no follow); optional service filter |
-| `push_codebase` | **Local MCP only:** pre-flight remote `snapshot_create`, then rsync local repo to `/opt/micro-services.d/services/` with itemized deploy ledger |
+| `push_codebase` | **Local MCP only:** pre-flight remote `snapshot_create`, then rsync local repo to `/opt/micro-services.d/` with itemized deploy ledger (`snapshots/` and `.bak-*` protected from `--delete`) |
 | `db_collections` | Allowlisted MongoDB namespaces (`qdata`, `users`, `tokens`, `tdata`) with estimated counts and the skill's limits |
 | `db_find` | Bounded native find (Extended JSON filter/projection/sort; hard cap 50 docs, 48 KiB budget, token redaction) |
 | `db_count` | Native countDocuments; first half of the destructive-write handshake |
@@ -335,11 +335,12 @@ Expose MCP tools to LLM clients over HTTP + SSE:
 
 | Host path | Container path | Mode | Purpose |
 |-----------|----------------|------|---------|
-| `/opt/micro-services.d/services` | `/opt/micro-services.d/services` | read-write | Compose project, `.environs`, codebase |
-| `/opt/micro-services.d/snapshots` | `/opt/micro-services.d/snapshots` | read-write | Snapshot archives |
+| `/opt/micro-services.d` | `/opt/micro-services.d` | read-write | Codebase root (compose project, `.environs`) **with the `snapshots/` store nested inside** — one mount covers both since the 2026-07-14 layout migration |
 | `/var/run/docker.sock` | `/var/run/docker.sock` | read-write | Docker Engine API for compose commands |
 
-The container joins the host `docker` group via `group_add` (`DOCKER_GID`) so the non-root `mcp` user can access the socket. Both filesystem paths must be writable by `mcp`. See [`mcp-server/README.md`](mcp-server/README.md) Section 8.2 for setup commands.
+> The mount path is identical inside and outside the container because the docker CLI talks to the **host** daemon, which resolves compose paths host-side. Note that the mounted root itself cannot be renamed from inside the container (it is a mountpoint) — this is why `snapshot_restore` uses a contents-swap rather than a whole-tree rename (see [Section 5](#5-system-snapshots--recovery-lifecycle)).
+
+The container joins the host `docker` group via `group_add` (`DOCKER_GID`) so the non-root `mcp` user can access the socket. The tree must be writable by `mcp`. See [`mcp-server/README.md`](mcp-server/README.md) Section 8.2 for setup commands.
 
 **Detailed MCP documentation:** see [`mcp-server/README.md`](mcp-server/README.md) and [`mcp-server/client-connection-guide.md`](mcp-server/client-connection-guide.md).
 
@@ -428,7 +429,7 @@ dbs
 
 ### MCP Docker lifecycle management
 
-The `go-mcp` service exposes three MCP tools (implemented in [`mcp-server/internal/skills/docker/`](mcp-server/internal/skills/docker/)) that run `docker compose` against `/opt/micro-services.d/services` via the mounted Docker socket.
+The `go-mcp` service exposes three MCP tools (implemented in [`mcp-server/internal/skills/docker/`](mcp-server/internal/skills/docker/)) that run `docker compose` against `/opt/micro-services.d` via the mounted Docker socket.
 
 ```mermaid
 flowchart TB
@@ -473,7 +474,7 @@ Always verify and finish the shutdown on the VPS host: `docker compose ps`, then
 | Property | Value |
 |----------|-------|
 | Command | `docker compose up -d` or `docker compose up -d --build` |
-| Environment | Variables loaded by parsing `/opt/micro-services.d/services/.environs` in Go (injected into `cmd.Env`) |
+| Environment | Variables loaded by parsing `/opt/micro-services.d/.environs` in Go (injected into `cmd.Env`) |
 | Argument | `build` (boolean, optional) — when true, adds `--build` |
 
 #### `system_logs` — static troubleshooting snapshot
@@ -685,7 +686,9 @@ The `qdata.json` file contains thousands of quote documents and is several megab
 
 ## 5. System Snapshots & Recovery Lifecycle
 
-The MCP server exposes a paired backup/restore workflow for the VPS codebase at `/opt/micro-services.d/services`. Both tools run inside the `go-mcp` container against host bind mounts and require Bearer authentication like all MCP endpoints.
+The MCP server exposes a paired backup/restore workflow for the VPS codebase at `/opt/micro-services.d`. Both tools run inside the `go-mcp` container against the host bind mount and require Bearer authentication like all MCP endpoints.
+
+> **Layout migration (2026-07-14):** the codebase moved from `/opt/micro-services.d/services` up to `/opt/micro-services.d` itself. The snapshot store `snapshots/` is now **nested inside** the codebase tree, and the tree root is the container's bind-mount point (unrenamable from inside the container). Both facts shape the mechanics below. **Archives created before the migration are NOT restore-compatible** with the new layout.
 
 ### Overview
 
@@ -695,17 +698,17 @@ flowchart LR
         A[snapshot_create] --> B["/opt/micro-services.d/snapshots/snapshot-TIMESTAMP.tar.gz"]
     end
     subgraph restore [After Failed Deployment]
-        C[snapshot_restore] --> D["/opt/micro-services.d/services"]
-        C --> E["services.bak-TIMESTAMP"]
+        C[snapshot_restore] --> D["/opt/micro-services.d (contents replaced)"]
+        C --> E["/opt/micro-services.d/.bak-TIMESTAMP (previous contents)"]
     end
     B --> C
 ```
 
 | Path | Purpose |
 |------|---------|
-| `/opt/micro-services.d/services` | Active codebase (Docker stack, API, web, configs) |
-| `/opt/micro-services.d/snapshots/` | Timestamped `.tar.gz` archives |
-| `/opt/micro-services.d/services.bak-<timestamp>` | Previous active tree after a restore (not removed automatically) |
+| `/opt/micro-services.d` | Active codebase root (Docker stack, API, web, configs) |
+| `/opt/micro-services.d/snapshots/` | Timestamped `.tar.gz` archives — nested inside the codebase, excluded from every archive and from `push_codebase --delete` |
+| `/opt/micro-services.d/.bak-<timestamp>/` | Previous contents after a restore, kept inside the tree (not removed automatically) |
 
 ### `snapshot_create`
 
@@ -713,9 +716,10 @@ flowchart LR
 
 **What it does:**
 
-1. Validates `/opt/micro-services.d/services` exists.
+1. Validates `/opt/micro-services.d` exists.
 2. Creates `/opt/micro-services.d/snapshots/` if needed.
-3. Runs `tar -czf … --exclude=image --exclude=vol -C /opt/micro-services.d/services .`
+3. Runs `tar -czf … --exclude=image --exclude=vol --exclude=snapshots --exclude='.bak-*' -C /opt/micro-services.d .`
+   (the `snapshots` exclusion prevents each archive from recursively containing all previous archives; `.bak-*` keeps old restore backups out).
 4. Writes `snapshot-YYYY-MM-DD_HH-MM-SS.tar.gz`.
 
 **MCP invocation:** Call tool `snapshot_create` with **no arguments**.
@@ -732,14 +736,15 @@ flowchart LR
 
 **When to use:** When a deployment or AI-applied change breaks the stack and you need to revert to a known-good archive.
 
-**What it does:**
+**What it does (contents-swap — the tree root is a bind-mount point and cannot be renamed from inside the container):**
 
 1. Validates the `filename` argument (basename only; must match `snapshot-*.tar.gz`).
 2. Confirms the archive exists in `/opt/micro-services.d/snapshots/`.
-3. Renames the active directory: `services` → `services.bak-<timestamp>`.
-4. Creates a fresh `services` directory.
-5. Runs `tar -xzf <archive> -C /opt/micro-services.d/services`.
-6. **On extraction failure:** removes the partial `services` directory and renames `services.bak-<timestamp>` back to `services` (automatic rollback).
+3. Creates the backup directory `/opt/micro-services.d/.bak-<timestamp>/`.
+4. Moves every top-level entry of the tree into the backup — **except the preserved set**: `snapshots/` (so the archive stays readable and all prior archives stay active), `image/` and `vol/` (persistent runtime assets excluded from archives — extraction cannot re-create them, so they stay live), and other `.bak-*` directories.
+5. Runs `tar -xzf <archive> -C /opt/micro-services.d` (archives never contain any preserved name, so extraction cannot collide with what stayed behind).
+6. **Reclaims nested excluded assets:** tar exclusions match at any depth, so entries like `prx/image` (proxy static files) are absent from archives yet were swapped out with their parent directory. After extraction, every backup entry whose name matches an exclusion pattern and whose counterpart is missing from the restored tree is moved back (reported as `reclaimed_excluded_assets`). Reclaim problems are warnings, never failures — affected entries stay safe inside the backup.
+7. **On extraction failure:** removes whatever was partially extracted, moves the original contents back out of `.bak-<timestamp>`, and deletes the empty backup (automatic rollback — the snapshots store is never touched by rollback, so archives cannot be destroyed).
 
 **MCP invocation:** Call tool `snapshot_restore` with the archive **basename**:
 
@@ -757,7 +762,7 @@ flowchart LR
 }
 ```
 
-**Success output fields:** `status`, `restored_from`, `services_dir`, `previous_services_backup`, `restored_at_utc`.
+**Success output fields:** `status`, `restored_from`, `codebase_dir`, `previous_contents_backup`, `snapshots_store_preserved`, `restored_at_utc`.
 
 ### Step-by-step workflow for developers and AI agents
 
@@ -780,20 +785,21 @@ flowchart LR
    ```
 2. Choose the archive created **before** the failed change.
 3. Call `snapshot_restore` with `filename` set to that archive's basename only.
-4. Confirm the tool response shows `status: ok` and note `previous_services_backup` (the failed tree is preserved as `services.bak-<timestamp>`).
+4. Confirm the tool response shows `status: ok` and note `previous_contents_backup` (the failed tree's contents are preserved in `/opt/micro-services.d/.bak-<timestamp>/`).
 5. Rebuild/restart affected containers if needed:
    ```bash
-   cd /opt/micro-services.d/services   # or your compose deploy path
+   cd /opt/micro-services.d
    docker compose up -d --build
    ```
-6. Verify services (API, web, MCP) before deleting old `services.bak-*` directories manually.
+6. Verify services (API, web, MCP) before deleting old `.bak-*` directories manually.
 
 ### Important notes
 
-- Archives **exclude** `image/` and `vol/` to save space; those directories are **not** restored from snapshots created by `snapshot_create`. Re-create or re-mount them separately if required.
-- Restored archives contain the **contents** of `services/` at archive time (not a nested `services/` folder), matching how `snapshot_create` packs the tree.
-- Old `services.bak-*` directories accumulate after each restore; prune them manually when no longer needed.
-- The `go-mcp` container requires **read-write** access to both host paths (see [Section 3](#3-infrastructure--network-topology)).
+- Archives **exclude** `image/`, `vol/`, `snapshots/`, and `.bak-*` (patterns match at any depth) — and `snapshot_restore` guarantees the excluded set **survives every restore live in the active tree**: top-level entries (`vol/`, `snapshots/`) are preserved in place, and nested ones (`prx/image/`) are reclaimed from the backup after extraction. Excluded-from-archive ⇔ survives-restore, by construction; nothing needs re-creating.
+- Restored archives contain the **contents** of `/opt/micro-services.d` at archive time (not a nested folder), matching how `snapshot_create` packs the tree.
+- **Pre-migration archives** (created before 2026-07-14, when the codebase lived under `services/`) are **not compatible** with `snapshot_restore` on the new layout — restoring one would reproduce the old nesting inside the new root.
+- `.bak-*` directories accumulate inside the tree after each restore; prune them manually when no longer needed (they are excluded from new snapshots and protected from `push_codebase --delete`).
+- The `go-mcp` container requires **read-write** access to the `/opt/micro-services.d` mount (see [Section 3](#3-infrastructure--network-topology)).
 
 ---
 
@@ -1048,7 +1054,7 @@ sequenceDiagram
 #### Three-step lifecycle
 
 1. **Pre-flight snapshot:** Connect to production MCP at `DEPLOY_MCP_URL` (default `https://api.thirdeye.live/sse`) via HTTPS+SSE and call `snapshot_create`. Abort immediately if this fails — no rsync runs without a backup.
-2. **Rsync sync:** Push local tree to `/opt/micro-services.d/services/` with `rsync -az --delete -i`.
+2. **Rsync sync:** Push local tree to `/opt/micro-services.d/` with `rsync -az --delete -i`.
 3. **Deployment ledger:** Write itemized changes to `deploy_ledgers/deploy-YYYY-MM-DD_HH-MM-SS.log` under the local repo root and return the full ledger in the tool response.
 
 #### Rsync flags and exclusions
@@ -1064,9 +1070,9 @@ sequenceDiagram
 
 The entire rsync invocation is additionally bounded by a **30-minute timeout** (context-derived, so client cancellation still propagates first); the pre-flight `snapshot_create` call is bounded by 10 minutes.
 
-**Excluded paths (never synced):** `.git/`, `node_modules/`, `.venv/`, `__pycache__/`, `.env`, `.environs`, `image/`, `vol/`, `deploy_ledgers/`
+**Excluded paths (never synced, and protected from `--delete`):** `.git/`, `node_modules/`, `.venv/`, `__pycache__/`, `.env`, `.environs`, `image/`, `vol/`, `snapshots/`, `.bak-*`, `deploy_ledgers/`
 
-The `image/` and `vol/` exclusions mirror `snapshot_create` — persistent runtime assets on the VPS remain untouched by code pushes.
+The `image/` and `vol/` exclusions mirror `snapshot_create` — persistent runtime assets on the VPS remain untouched by code pushes. The `snapshots/` and `.bak-*` exclusions are **load-bearing** since the 2026-07-14 layout migration: both live inside the sync root, and without these entries `rsync --delete` would erase every snapshot archive and restore backup on the first push.
 
 #### Itemized ledger legend
 
@@ -1087,7 +1093,7 @@ After a successful `push_codebase`:
 
 1. Call `system_up` with `build: true` on production MCP, or on the VPS host:
    ```bash
-   cd /opt/micro-services.d/services
+   cd /opt/micro-services.d
    source .environs   # if needed for compose
    docker compose up -d --build
    ```
@@ -1104,12 +1110,11 @@ After a successful `push_codebase`:
 
 ### Overview
 
-Production deployment is **manual** — there is no CI/CD pipeline (no `.github/workflows` or equivalent) in this repository. Operators deploy via Docker Compose on the VPS, with environment secrets stored outside version control.
+Production deployment is **manual** (or via the `push_codebase` MCP tool) — there is no CI/CD pipeline (no `.github/workflows` or equivalent) in this repository. Operators deploy via Docker Compose on the VPS, with environment secrets stored outside version control.
 
-**Evidence of production paths** (from `scripts/*.sh`):
+**Production tree provisioning (2026-07-14 layout):** the VPS runtime tree is `/opt/micro-services.d/`, populated with the **contents of this repository at its root** (clone the repo, then move its contents into `/opt/micro-services.d/` — or clone directly into it). The repository layout and the runtime tree are therefore identical, with two VPS-only additions living inside the root: `snapshots/` (archive store) and any `.bak-*` directories left by `snapshot_restore`. `docker-compose.yml` and `.environs` sit directly at `/opt/micro-services.d/`.
 
-- Deploy directory: `/opt/micro-services.d/quotes-api/`
-- Environment file: `/opt/micro-services.d/quotes-api/.environs`
+> **Legacy paths:** `scripts/*.sh` still hardcode the pre-migration deploy directory `/opt/micro-services.d/quotes-api/` — the scripts are deprecated (see [Operational scripts](#operational-scripts--️-deprecated-2026-07-12)) and those paths are no longer the deploy root.
 
 ### Pre-deployment checklist
 
@@ -1136,7 +1141,7 @@ NGINX and MongoDB use public upstream images (`nginx:latest`, `mongo:4.4.18`).
 **Build commands:**
 
 ```bash
-cd /opt/micro-services.d/quotes-api   # or your deploy path
+cd /opt/micro-services.d
 
 # Build all images
 docker compose build
@@ -1158,9 +1163,10 @@ There is no container registry push/pull workflow documented — images are buil
 ### Deploy / update procedure
 
 ```bash
-# 1. Pull latest source
-cd /opt/micro-services.d/quotes-api
-git pull
+# 1. Update source — EITHER call push_codebase from a local MCP (preferred:
+#    pre-flight snapshot + itemized ledger), OR pull directly on the host:
+cd /opt/micro-services.d
+git pull   # only if the tree is a live clone; skip when using push_codebase
 
 # 2. Source environment
 source .environs
@@ -1227,11 +1233,14 @@ The `scripts/` directory is **deprecated in favor of the MCP database skill**, w
 
 There is deliberately **no `db_run_script` tool** — wrapping the bash scripts in MCP would reintroduce every weakness listed above.
 
-The legacy scripts expect `.environs` at `/opt/micro-services.d/quotes-api/.environs` (note: the pre-migration path). Break-glass example:
+The legacy scripts hardcode `ENV_PATH=/opt/micro-services.d/quotes-api/.environs` — a **pre-migration path that no longer exists**, so the scripts now fail at their env check unless that path is symlinked. This is deliberate friction: prefer the MCP replacements. Break-glass only:
 
 ```bash
-cd /opt/micro-services.d/quotes-api/scripts
-./add_user.sh newuser@example.com   # DEPRECATED — prefer the user_provision MCP tool
+# DEPRECATED — prefer the user_provision MCP tool. If genuinely required:
+sudo mkdir -p /opt/micro-services.d/quotes-api
+sudo ln -sf /opt/micro-services.d/.environs /opt/micro-services.d/quotes-api/.environs
+cd /opt/micro-services.d/scripts
+./add_user.sh newuser@example.com
 ```
 
 ### MCP client connection (production)

@@ -24,7 +24,7 @@ func Register(server *mcp.Server) {
 		Description: "Synchronizes the local micro-services codebase to the production VPS via rsync over SSH. " +
 			"LOCAL-ONLY: must run on a locally started mcp-server with rsync, SSH access, and DEPLOY_SSH_TARGET set. " +
 			"Pre-flight: calls remote production snapshot_create over HTTPS+SSE before syncing. " +
-			"Uses rsync -az --delete -i with exclusions for .git/, node_modules/, .venv/, __pycache__/, .env, .environs, image/, vol/, deploy_ledgers/. " +
+			"Uses rsync -az --delete -i with exclusions for .git/, node_modules/, .venv/, __pycache__/, .env, .environs, image/, vol/, snapshots/ (protects the VPS snapshot store from --delete), deploy_ledgers/. " +
 			"Writes an itemized ledger to deploy_ledgers/deploy-YYYY-MM-DD_HH-MM-SS.log and returns it in the response. " +
 			"Takes no arguments.",
 	}, handlePushCodebase)

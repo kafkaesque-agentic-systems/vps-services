@@ -60,6 +60,9 @@ services:
       context: ./web
     # restart: on-failure
     environment:
+      - SECRET_KEY
+      - RECAPTCHA_PUBLIC_KEY
+      - RECAPTCHA_PRIVATE_KEY
       - MAILSERVER
       - MAILPASS
       - AUTHORIZED
@@ -172,17 +175,22 @@ services:
         limits:
           cpus: "0.50"
           memory: 256M
-    # Host bind mounts for snapshot_create / snapshot_restore: read-write access
-    # to the live services tree and the snapshots directory. Ensure both paths
-    # are writable by the container's mcp user (see mcp-server/README.md).
+    # Host bind mount for snapshot_create / snapshot_restore and the compose
+    # lifecycle tools. LAYOUT MIGRATION (2026-07-14): the codebase now lives
+    # directly at /opt/micro-services.d (no services/ level), with the
+    # snapshots store nested inside it — so a SINGLE mount of the root covers
+    # both the codebase and the snapshots. The path must be identical inside
+    # and outside the container because the docker CLI talks to the HOST
+    # daemon through the socket, and compose resolves paths host-side.
+    # Ensure the tree is writable by the container's mcp user
+    # (see mcp-server/README.md §8.2).
     # Docker socket: required for system_down / system_up / system_logs.
     # Replace DOCKER_GID with the host docker group GID (getent group docker).
     group_add:
       - "${DOCKER_GID:-999}"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - /opt/micro-services.d/services:/opt/micro-services.d/services:rw
-      - /opt/micro-services.d/snapshots:/opt/micro-services.d/snapshots:rw
+      - /opt/micro-services.d:/opt/micro-services.d:rw
     networks:
       quotes:
         # Next free address after reverse-proxy (.5). Nginx proxies /sse and

@@ -17,12 +17,20 @@ const (
 	// toolNameCreate is the MCP tool identifier for creating a codebase snapshot.
 	toolNameCreate = "snapshot_create"
 
-	// defaultSourceDir is the VPS path to the active services tree that is
+	// defaultSourceDir is the VPS path to the active codebase tree that is
 	// archived on each invocation.
-	defaultSourceDir = "/opt/micro-services.d/services"
+	//
+	// LAYOUT MIGRATION (2026-07-14): the codebase moved from
+	// /opt/micro-services.d/services up to /opt/micro-services.d itself. The
+	// snapshots directory therefore now lives INSIDE the source tree, which is
+	// why "snapshots" appears in excludedDirNames below — without it every
+	// archive would recursively contain all previous archives.
+	defaultSourceDir = "/opt/micro-services.d"
 
 	// defaultDestDir is the VPS path where snapshot archives are written.
-	// CreateSnapshot ensures this directory exists via os.MkdirAll before writing.
+	// CreateSnapshot ensures this directory exists via os.MkdirAll before
+	// writing. NOTE: it is a child of defaultSourceDir (see layout migration
+	// note above); restore.go contains dedicated handling for this nesting.
 	defaultDestDir = "/opt/micro-services.d/snapshots"
 
 	// snapshotTimeFormat produces human-readable, filesystem-safe timestamps such
@@ -41,9 +49,39 @@ const (
 	destDirPerm = 0o755
 )
 
-// excludedDirNames lists top-level directory names under defaultSourceDir that
-// are omitted from every archive to save disk space.
-var excludedDirNames = []string{"image", "vol"}
+// excludedDirNames lists names (tar glob patterns) under defaultSourceDir that
+// are omitted from every archive.
+//
+//   - image, vol: bulky persistent runtime assets (disk-space economy).
+//   - snapshots:  the archive store itself, which lives INSIDE the source tree
+//     since the 2026-07-14 layout migration. Excluding it is CORRECTNESS, not
+//     economy — otherwise every snapshot would recursively swallow all prior
+//     snapshots, growing without bound.
+//   - .bak-*:     pre-restore backup directories created by snapshot_restore
+//     inside the tree (see restore.go backupNamePrefix); archiving them would
+//     snowball old codebase generations into every new snapshot.
+var excludedDirNames = []string{"image", "vol", "snapshots", ".bak-*"}
+
+// matchesExcludedName reports whether a top-level entry name matches one of
+// the archive-exclusion patterns above (patterns use filepath.Match globs,
+// e.g. ".bak-*").
+//
+// # Why restore preservation derives from the exclusion list
+//
+// Anything excluded from archives can never be re-created BY a restore. If the
+// contents-swap in restore.go moved such an entry into the backup, the restored
+// tree would silently lose it — for image/ and vol/ that means dropping
+// persistent runtime assets from the active tree. Deriving the preservation
+// set from THIS list keeps the two behaviors in lockstep by construction:
+// excluded from archives ⇔ preserved in place across restores.
+func matchesExcludedName(name string) bool {
+	for _, pattern := range excludedDirNames {
+		if ok, err := filepath.Match(pattern, name); err == nil && ok {
+			return true
+		}
+	}
+	return false
+}
 
 // SnapshotInput is the input schema for the snapshot_create tool.
 //
@@ -60,20 +98,25 @@ type SnapshotInput struct{}
 func Register(server *mcp.Server) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name: toolNameCreate,
-		Description: "Creates a gzip-compressed tar archive of the VPS services codebase at " +
+		Description: "Creates a gzip-compressed tar archive of the VPS codebase at " +
 			defaultSourceDir + ", writing the snapshot to " + defaultDestDir + ". " +
-			"Excludes the top-level 'image' and 'vol' directories to save disk space. " +
-			"The output filename uses the format snapshot-YYYY-MM-DD_HH-MM-SS.tar.gz. " +
-			"Takes no arguments. Use before applying major AI-driven changes.",
+			"Excludes the top-level 'image', 'vol', and 'snapshots' directories plus '.bak-*' restore " +
+			"backups (the snapshots exclusion prevents recursive self-archiving, as the store lives " +
+			"inside the codebase tree). The output filename uses the format " +
+			"snapshot-YYYY-MM-DD_HH-MM-SS.tar.gz. Takes no arguments. Use before applying major " +
+			"AI-driven changes.",
 	}, handleSnapshotCreate)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name: toolNameRestore,
-		Description: "Restores the VPS services codebase from a snapshot archive in " +
+		Description: "Restores the VPS codebase from a snapshot archive in " +
 			defaultDestDir + " into " + defaultSourceDir + ". " +
 			"Requires the 'filename' argument (archive basename, e.g. snapshot-2026-07-12_12-00-00.tar.gz). " +
-			"Renames the active services directory to services.bak-<timestamp> before extraction; " +
-			"rolls back automatically if extraction fails.",
+			"Contents-swap failsafe: moves the current tree contents into a " + backupNamePrefix +
+			"<timestamp> backup directory INSIDE the tree (the root itself is a container bind mount and " +
+			"cannot be renamed), preserves the snapshots store in place, then extracts; rolls back " +
+			"automatically if extraction fails. Archives created before the 2026-07-14 layout migration " +
+			"(codebase under /opt/micro-services.d/services) are NOT compatible.",
 	}, handleSnapshotRestore)
 
 	log.Printf("skills/snapshot: registered tools %q, %q", toolNameCreate, toolNameRestore)

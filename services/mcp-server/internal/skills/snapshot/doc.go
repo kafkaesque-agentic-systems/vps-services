@@ -10,17 +10,33 @@
 //
 // # Tools
 //
-//   - snapshot_create — archives /opt/micro-services.d/services (excluding image
-//     and vol) into /opt/micro-services.d/snapshots/.
-//   - snapshot_restore — extracts a named archive back into the services
-//     directory after renaming the active tree to services.bak-<timestamp>.
+//   - snapshot_create — archives /opt/micro-services.d (excluding image, vol,
+//     the snapshots store itself, and .bak-* restore backups) into
+//     /opt/micro-services.d/snapshots/.
+//   - snapshot_restore — CONTENTS-SWAP restore: moves the tree's current
+//     top-level entries into a .bak-<timestamp> backup directory INSIDE the
+//     tree, preserving the entire archive-exclusion set in place (snapshots,
+//     image, vol, .bak-*) — excluded entries cannot be re-created by
+//     extraction, so swapping them out would lose them — then extracts the
+//     named archive into the root; rolls back automatically on failure.
 //
-// # Paths and exclusions
+// # Paths and exclusions (2026-07-14 layout migration)
 //
-// The default source directory is /opt/micro-services.d/services. The default
-// snapshot directory is /opt/micro-services.d/snapshots. Two top-level
-// subdirectories under the source are excluded from every archive to conserve
-// disk space: image and vol.
+// The default source directory is /opt/micro-services.d — the codebase now
+// lives at the root of that tree (the former services/ level was removed).
+// Two consequences shape this package's design:
+//
+//  1. The snapshot store /opt/micro-services.d/snapshots is NESTED inside the
+//     source, so archives exclude "snapshots" (correctness: prevents each
+//     archive from recursively containing all previous archives) alongside
+//     image, vol (disk economy), and .bak-* (restore backups).
+//  2. The source root is the go-mcp container's BIND-MOUNT POINT, which
+//     cannot be renamed from inside the container (EBUSY). snapshot_restore
+//     therefore swaps the tree's CONTENTS rather than the tree itself; see
+//     restore.go for the full rationale.
+//
+// Archives created before the migration contain the old services/-rooted
+// layout and are NOT compatible with snapshot_restore against the new root.
 //
 // # Self-healing contract
 //
