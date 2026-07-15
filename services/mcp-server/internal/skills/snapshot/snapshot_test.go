@@ -127,6 +127,21 @@ func TestCreateSnapshotAtMissingSource(t *testing.T) {
 }
 
 func TestHandleSnapshotCreateSuccess(t *testing.T) {
+	// OPT-IN END-TO-END TEST — never runs implicitly.
+	//
+	// This handler test archives the REAL default production tree
+	// (/opt/micro-services.d). On a developer machine that path is absent; on
+	// the VPS it exists, and an implicit run would either fail on permissions
+	// (the host shell user is not the container's mcp user) or — far worse —
+	// silently write a real archive into the production snapshots store as a
+	// unit-test side effect. Side-effectful operations against production
+	// paths require a deliberate operator opt-in.
+	//
+	// The success PATH itself is fully covered without side effects by
+	// TestCreateSnapshotAt and the restore round-trip tests (temp dirs).
+	if os.Getenv("MCP_SNAPSHOT_E2E") != "1" {
+		t.Skip("set MCP_SNAPSHOT_E2E=1 to run the end-to-end snapshot handler test (writes a REAL archive to the production snapshots store)")
+	}
 	if _, err := exec.LookPath("tar"); err != nil {
 		t.Skip("tar binary not available in PATH")
 	}
