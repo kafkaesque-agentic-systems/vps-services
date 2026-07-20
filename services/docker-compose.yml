@@ -185,9 +185,23 @@ services:
     # Ensure the tree is writable by the container's mcp user
     # (see mcp-server/README.md §8.2).
     # Docker socket: required for system_down / system_up / system_logs.
-    # Replace DOCKER_GID with the host docker group GID (getent group docker).
+    # DOCKER_GID must equal the host docker group GID (getent group docker).
+    # It is set in .environs (host-side, never synced/committed) because it is
+    # host-specific. Fail-fast by design: an unset value ABORTS the compose run
+    # instead of silently substituting a wrong GID. A previous ":-999" default
+    # did exactly that and left the container unable to read the docker socket,
+    # silently disabling every docker tool (incident 2026-07-19).
+    # CODEBASE_GID is the group owning the deployed codebase (the deploy user's
+    # group, e.g. kafka). snapshot_create tars the whole tree from INSIDE this
+    # container as the unprivileged mcp user, so it must be able to READ every
+    # file. Several deployed files are deliberately group-only (0640/0750) --
+    # the DKIM signing key, mail.py, the scripts -- and without this group the
+    # tar aborts with "Cannot open: Permission denied", silently costing the
+    # rollback safety net. Granting the group is strictly preferable to making
+    # a private key world-readable.
     group_add:
-      - "${DOCKER_GID:-999}"
+      - "${DOCKER_GID:?DOCKER_GID must be set in .environs - run: getent group docker}"
+      - "${CODEBASE_GID:?CODEBASE_GID must be set in .environs - run: getent group kafka}"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /opt/micro-services.d:/opt/micro-services.d:rw

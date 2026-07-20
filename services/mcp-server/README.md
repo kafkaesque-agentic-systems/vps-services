@@ -249,6 +249,55 @@ Tools are namespaced `<domain>_<action>` and registered in skill packages under 
 
   > ⚠️ **Production go-mcp cannot run this tool** — it has no local checkout or rsync source. After a successful push, rebuild/restart on the VPS (`system_up` with `build=true` or `docker compose up -d --build`).
 
+#### Running the local instance as a background agent (macOS)
+
+Rather than a foreground `go run` every session, the local instance can run as a
+LaunchAgent that starts at login and restarts on crash.
+
+| Path | Purpose |
+| :--- | :--- |
+| `run-local.sh` | Sources `.env`, validates required config, starts the server |
+| `launchd/…​.plist.template` | Agent definition; `install.sh` substitutes the absolute repo path |
+| `launchd/install.sh` | `install` / `uninstall` / `status` |
+| `logs/mcp-deploy.{out,err}.log` | Runtime logs (gitignored, inside the repo so the agent stays discoverable) |
+
+```bash
+cd launchd
+./install.sh install      # generate plist, load agent, start at login
+./install.sh status       # loaded? listening? last stderr lines
+./install.sh uninstall    # unload + delete plist
+```
+
+> ⚠️ **This agent runs at login holding production credentials** (`MCP_SECRET_TOKEN`
+> and `DEPLOY_SSH_TARGET`, read from `.env`). Remove it with `./install.sh uninstall`
+> when a credentialed background process is no longer wanted.
+
+**Least privilege.** `run-local.sh` sets `MCP_SKILLS=deploy`, so the agent registers
+only `push_codebase`. A background process on a laptop must not be able to invoke
+`system_down`, `snapshot_restore`, or `db_delete` against production. The restriction
+is enforced at registration in `cmd/server/main.go` — no client-side configuration can
+re-expose the other tools. Verify from the log at any time:
+
+```
+skills: MCP_SKILLS="deploy" -> RESTRICTED surface, registered only: deploy
+```
+
+#### Client registration
+
+| Client | Config file | Transport |
+| :--- | :--- | :--- |
+| Claude Code | `.mcp.json` at the repo root | native `sse`; token referenced as `${MCP_SECRET_TOKEN}` |
+| Claude Desktop | `~/Library/Application Support/Claude/claude_desktop_config.json` | `npx mcp-remote` stdio bridge |
+
+> Claude Desktop does **not** inherit the shell environment — GUI-launched macOS apps
+> never read `~/.zshrc`. Its token must therefore be written into the config file
+> directly; a `${MCP_SECRET_TOKEN}` reference expands to an empty string there and
+> produces silent 401s.
+
+Register both the production and local servers under **distinct names**
+(`my-remote-vps` and `vps-deploy-local`) so tool calls are unambiguous about which
+instance they target.
+
 ### Database skill (`db_*`, `user_*`, `quote_owner_lookup`)
 
 > Native MongoDB tooling on the **official Go driver v2** — no shell, no `mongo --eval`, no JavaScript. Arguments are MongoDB **Extended JSON strings** (`{"$oid": "..."}` for ObjectIds). Full guardrail contract and the `mcp_agent` least-privilege runbook: [`../ARCHITECTURE.md`](../ARCHITECTURE.md) § "MCP database skill"; package charter: [`internal/skills/database/doc.go`](internal/skills/database/doc.go).
@@ -384,6 +433,7 @@ The engine's core (transport + auth) is configured by **exactly two** environmen
 | :--- | :--- | :--- | :--- | :--- |
 | `MCP_SECRET_TOKEN` | string (shared secret) | *(none)* | The Bearer token every client must present. Injected at deploy time — **never** committed. If unset, the middleware **fails closed (HTTP 500)** and rejects all traffic. See [`middleware.go:20`](internal/auth/middleware.go:20). | **Yes** |
 | `PORT` | integer (TCP port) | `8080` | Container-internal HTTP listen port. Not published to the host; Nginx proxies to it over the docker network. See [`main.go:29`](cmd/server/main.go:29). | No |
+| `MCP_SKILLS` | comma-separated skill names | *(unset = all skills)* | **Least-privilege tool allowlist.** Valid names: `system`, `snapshot`, `docker`, `deploy`, `database`. Unset registers everything (the production configuration). `MCP_SKILLS=deploy` registers only `push_codebase` — used by the local instance. Case-insensitive; whitespace tolerated. An **unknown name is fatal at startup**, never silently ignored, so a typo cannot quietly shrink the tool surface. See [`main.go`](cmd/server/main.go). | No |
 
 > Beyond §5.1, the only other variables read by application code are the database-skill set (§5.3) and the local-only deploy set (§5.4). `readHeaderTimeout` (10s) and `shutdownGracePeriod` (15s) are compile-time constants in [`main.go`](cmd/server/main.go:35), not env-configurable.
 

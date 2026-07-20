@@ -17,7 +17,7 @@ func TestBuildRsyncArgs(t *testing.T) {
 
 	args := buildRsyncArgs(localRoot, remoteTarget, ledgerPath)
 
-	wantPrefix := []string{"-a", "-z", "--delete", "-i", "--log-file=" + ledgerPath}
+	wantPrefix := []string{"-a", "-z", "--delete", "-i", "--omit-dir-times", "--no-perms", "--log-file=" + ledgerPath}
 	for i, want := range wantPrefix {
 		if args[i] != want {
 			t.Errorf("args[%d] = %q, want %q", i, args[i], want)
@@ -49,6 +49,25 @@ func TestBuildRsyncArgs(t *testing.T) {
 	if !strings.Contains(rsyncRemoteShell, "BatchMode=yes") {
 		t.Errorf("rsyncRemoteShell = %q, must enforce ssh -o BatchMode=yes", rsyncRemoteShell)
 	}
+	// Guard: BatchMode bounds AUTHENTICATION but not CONNECTION. Without an
+	// explicit ConnectTimeout an unreachable or firewalled host leaves rsync
+	// blocking on connect until the 30-minute ceiling, long after the MCP client
+	// has timed out, surfacing as an opaque failure with a zero-byte ledger.
+	if !strings.Contains(rsyncRemoteShell, "ConnectTimeout=") {
+		t.Errorf("rsyncRemoteShell = %q, must set ssh -o ConnectTimeout=", rsyncRemoteShell)
+	}
+	// Guard: the deploy must never rewrite production file modes from the
+	// developer's machine. Pushing local 0640/0750 modes onto files the mcp
+	// container reads broke snapshot_create on 2026-07-19 -- the rollback
+	// safety net -- while every service still appeared healthy.
+	if indexOf(args, "--no-perms") < 0 {
+		t.Errorf("args must contain --no-perms so the host owns permissions: %v", args)
+	}
+	// Guard: directory mtimes cannot be set on a sync root the deploy user does
+	// not own, and that single failure fails the ENTIRE push with exit 23.
+	if indexOf(args, "--omit-dir-times") < 0 {
+		t.Errorf("args must contain --omit-dir-times: %v", args)
+	}
 
 	source := args[len(args)-2]
 	dest := args[len(args)-1]
@@ -57,6 +76,39 @@ func TestBuildRsyncArgs(t *testing.T) {
 	}
 	if dest != remoteTarget {
 		t.Errorf("dest = %q, want %q", dest, remoteTarget)
+	}
+}
+
+// TestRsyncExcludesContainsRequiredPatterns pins the exclusion list itself.
+//
+// TestBuildRsyncArgs only verifies that whatever rsyncExcludes contains reaches
+// the command line, so silently DELETING an entry from the list keeps that test
+// green. Each pattern below prevents a specific, observed failure, so the set is
+// asserted directly.
+func TestRsyncExcludesContainsRequiredPatterns(t *testing.T) {
+	required := map[string]string{
+		".git/":              "version control metadata is not deployment content",
+		".env":               "carries MCP_SECRET_TOKEN and DEPLOY_SSH_TARGET",
+		".environs":          "host-specific runtime config, owned by the VPS",
+		"vol/":               "database volume data; syncing it would overwrite live storage",
+		"image/":             "build artifacts",
+		"snapshots/":         "the rollback store lives inside the sync root; --delete would erase it",
+		".bak-*":             "snapshot_restore's pre-restore backups on the VPS",
+		"*.bak-*":            "operator copies such as .env.bak-<ts>, which carry secrets",
+		"/mcp-server/server": "a Darwin build artifact, meaningless on the Linux VPS",
+		"/mcp-server/logs/":  "local LaunchAgent logs would be swept into VPS snapshots",
+		"deploy_ledgers/":    "ledgers record deploys and must not be shipped by one",
+	}
+
+	present := make(map[string]bool, len(rsyncExcludes))
+	for _, p := range rsyncExcludes {
+		present[p] = true
+	}
+
+	for pattern, why := range required {
+		if !present[pattern] {
+			t.Errorf("rsyncExcludes is missing %q — %s", pattern, why)
+		}
 	}
 }
 

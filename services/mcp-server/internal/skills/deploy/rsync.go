@@ -27,7 +27,15 @@ const (
 	// makes ssh fail IMMEDIATELY when key authentication is unavailable instead
 	// of blocking forever on an interactive password prompt — an MCP tool handler
 	// is non-interactive by definition, so a prompt could only ever hang the call.
-	rsyncRemoteShell = "ssh -o BatchMode=yes"
+	//
+	// ConnectTimeout bounds TCP connection establishment, which BatchMode does
+	// NOT cover. Without it an unreachable or firewalled host (a filtered SSH
+	// port, a stale UFW source-IP allowlist) leaves rsync blocking on connect
+	// until rsyncTimeout, long past the point the MCP client has given up — the
+	// caller sees only an opaque request timeout and a zero-byte ledger, with
+	// the real cause reported nowhere. Ten seconds turns that silent multi-minute
+	// hang into an immediate, actionable "Operation timed out".
+	rsyncRemoteShell = "ssh -o BatchMode=yes -o ConnectTimeout=10"
 
 	// rsyncTimeout bounds a single push_codebase sync. Thirty minutes is a
 	// generous ceiling for a full-tree first sync over a slow uplink while still
@@ -58,6 +66,27 @@ var rsyncExcludes = []string{
 	"vol/",
 	"snapshots/",
 	".bak-*", // pre-restore backups created by snapshot_restore inside the VPS tree
+
+	// Any timestamped backup, wherever it sits. The ".bak-*" pattern above only
+	// matches basenames BEGINNING with ".bak-", so it does not cover
+	// ".env.bak-20260719" or "docker-compose.yml.bak-20260719". Those are
+	// operator-made copies of live config; ".env.bak-*" in particular would
+	// carry MCP_SECRET_TOKEN into the VPS tree and from there into every
+	// subsequent snapshot archive.
+	"*.bak-*",
+
+	// Local build and runtime artifacts of the DEVELOPER's machine. The deploy
+	// source is a macOS checkout, so "server" is a Darwin binary that is useless
+	// on the Linux VPS and actively misleading sitting beside the real build;
+	// "logs/" is the local LaunchAgent's output, which would otherwise be swept
+	// into every VPS snapshot. Both paths are anchored with a leading slash so
+	// they match only at the transfer root, never an unrelated nested "server"
+	// or "logs" belonging to a service.
+	"/mcp-server/server",
+	"/mcp-server/logs/",
+
+	// The ledger store itself. Ledgers are a record OF deploys and must never be
+	// shipped BY one, or each push copies the previous push's logs to the VPS.
 	"deploy_ledgers/",
 }
 
@@ -95,6 +124,28 @@ func buildRsyncArgs(localRoot, remoteTarget, ledgerPath string) []string {
 		"-z",
 		"--delete",
 		"-i",
+		// Omit directory mtimes. -a implies -t, and setting a directory's mtime
+		// requires OWNING it. The VPS sync root is owned by the container's mcp
+		// user (uid 100 / systemd-network on the host) so that snapshot_create
+		// can write from inside the container; the deploy user reaches it only
+		// through group write, which permits creating entries but not
+		// restamping the directory. Without this flag every push fails on
+		// `failed to set times on "."` and exits 23, reporting the entire
+		// deploy as failed even when all file content transferred correctly.
+		// Chowning the root to the deploy user would silence it but break
+		// snapshots -- the rollback safety net -- so the flag is the correct
+		// trade: directory mtimes carry no deployment meaning, file times do.
+		"--omit-dir-times",
+		// Do not transfer file modes. -a implies -p, which makes the DEVELOPER's
+		// machine authoritative over production permissions -- a local umask or
+		// macOS default silently rewrites server modes on every push. That is
+		// backwards: the server's permission model is deliberate and belongs to
+		// the server. It bit us concretely on 2026-07-19, when pushing local
+		// 0640/0750 modes onto files the container reads left snapshot_create
+		// unable to tar the tree ("Cannot open: Permission denied"), destroying
+		// the rollback safety net while every service still looked healthy.
+		// Deploys carry CONTENT; the host owns permissions.
+		"--no-perms",
 		"--log-file=" + ledgerPath,
 	}
 	for _, pattern := range rsyncExcludes {

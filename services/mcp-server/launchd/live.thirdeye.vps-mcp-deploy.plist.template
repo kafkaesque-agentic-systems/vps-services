@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  LaunchAgent template for the LOCAL Custom-VPS-MCP-Engine instance.
+
+  Do not edit the installed copy in ~/Library/LaunchAgents directly - it is
+  generated from this template by install.sh, which substitutes the absolute
+  repo path. Edit this file and re-run install.sh instead.
+
+  This agent runs a background process that holds production deploy
+  credentials. It is deliberately restricted to MCP_SKILLS=deploy (set in
+  run-local.sh) so the only tool it can ever expose is push_codebase.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>live.thirdeye.vps-mcp-deploy</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__MCP_SERVER_DIR__/run-local.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__MCP_SERVER_DIR__</string>
+
+    <!--
+      launchd starts agents with a minimal PATH that does NOT include the Go
+      toolchain. Without this the agent fails with "go: command not found",
+      which is a classic silent-failure mode for LaunchAgents.
+    -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/go/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>__HOME__</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!--
+      Keep the server up across crashes. ThrottleInterval spaces out restarts
+      so a misconfiguration (for example a missing .env) produces a readable,
+      slow error loop in the log rather than a tight spin.
+    -->
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+
+    <!--
+      Logs live inside the repo, not buried in ~/Library, so that "is the
+      deploy agent running?" is answerable from the project directory.
+    -->
+    <key>StandardOutPath</key>
+    <string>__MCP_SERVER_DIR__/logs/mcp-deploy.out.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>__MCP_SERVER_DIR__/logs/mcp-deploy.err.log</string>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>

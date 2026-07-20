@@ -3,7 +3,16 @@
 # ----------------------------------------------------------------------------
 
 # Environment configurations
+# .environs = remote/host env (VPS). .env = local dev env (mcp-server), which
+# holds MCP_SECRET_TOKEN and DEPLOY_SSH_TARGET and must never be committed.
+# Note: the venv rules further down (env/, .venv/) do NOT match .env.
 .environs
+.env
+.env.*
+!.env.example
+
+# Local mcp-server LaunchAgent runtime logs (see services/mcp-server/launchd/)
+services/mcp-server/logs/
 
 # Cursor IDE rules
 .cursorrules
