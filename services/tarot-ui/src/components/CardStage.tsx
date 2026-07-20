@@ -58,13 +58,26 @@ export function CardStage({ phase, card }: CardStageProps): JSX.Element {
           className="pointer-events-none absolute -inset-6 animate-drift-glow rounded-[2rem] bg-amethyst/20 blur-2xl"
         />
 
-        <div className="relative h-full w-full overflow-hidden rounded-2xl border border-arcane bg-obsidian shadow-2xl shadow-black/60">
+        {/*
+          The stage. Its footprint is FIXED (the aspect-[2/3] wrapper above),
+          which is the entire anti-jank strategy: nothing on the page ever
+          resizes, so nothing below the card can move between draws.
+
+          Deck dimensions genuinely vary -- measured width/height ratios run
+          from ~0.60 (cosmic) to ~0.70 (hustling) against the well's 0.667 --
+          so `object-contain` letterboxes each card against the obsidian well
+          instead of cropping it (`object-cover` was cutting the top/bottom of
+          narrow decks and the sides of wide ones). The images are decoded
+          before reveal, so the fade remains opacity-only with no progressive
+          paint.
+        */}
+        <div className="relative h-full w-full overflow-hidden rounded-2xl border border-arcane bg-obsidian p-2 shadow-2xl shadow-black/60">
           <img
             src={CARD_BACK_SRC}
             alt="Face-down tarot card"
             width={320}
             height={480}
-            className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-fade ease-in-out ${
+            className={`absolute inset-2 h-[calc(100%-1rem)] w-[calc(100%-1rem)] object-contain drop-shadow-[0_4px_16px_rgba(0,0,0,0.6)] transition-opacity duration-fade ease-in-out ${
               backVisible ? 'opacity-100' : 'opacity-0'
             }`}
           />
@@ -76,7 +89,7 @@ export function CardStage({ phase, card }: CardStageProps): JSX.Element {
               alt={`Tarot card drawn from the ${formatDeckName(card.deck)} deck`}
               width={320}
               height={480}
-              className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-fade ease-in-out ${
+              className={`absolute inset-2 h-[calc(100%-1rem)] w-[calc(100%-1rem)] object-contain drop-shadow-[0_4px_16px_rgba(0,0,0,0.6)] transition-opacity duration-fade ease-in-out ${
                 faceVisible ? 'opacity-100' : 'opacity-0'
               }`}
             />

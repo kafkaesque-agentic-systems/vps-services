@@ -34,23 +34,50 @@ export class ApiError extends Error {
 }
 
 /**
- * Preloads and decodes an image so it can be revealed without a blank frame.
+ * Preloads an image so it can be revealed without a blank frame.
  *
  * Without this the fade-in begins before the bytes have arrived and the user
- * watches an empty rectangle brighten. `decode()` resolves only once the image
- * is ready to paint. A decode failure is non-fatal: the caller still renders,
- * and the browser retries the load through the `<img>` element itself.
+ * watches an empty rectangle brighten.
+ *
+ * This function is guaranteed to settle. A bare `await image.decode()` is NOT:
+ * browsers may defer decode work for detached images in hidden or backgrounded
+ * tabs, leaving the promise pending indefinitely and wedging the draw in the
+ * "Consulting…" state (observed in a background tab, 2026-07-20). Three exits
+ * cover every case:
+ *
+ * 1. `load` -> best-effort `decode()` -> resolve (the intended fast path);
+ * 2. `error` -> resolve, letting the in-document `<img>` retry and surface
+ *    its own failure;
+ * 3. a timeout -> resolve, accepting a progressive paint over a stuck UI.
+ *
+ * Preloading is an optimisation; it must never be able to block the feature.
  *
  * @param src - Absolute image URL.
+ * @param timeoutMs - Ceiling before the reveal proceeds without the preload.
  */
-export async function preloadImage(src: string): Promise<void> {
-  const image = new Image();
-  image.src = src;
-  try {
-    await image.decode();
-  } catch {
-    // Ignored deliberately -- see doc comment.
-  }
+export function preloadImage(src: string, timeoutMs = 4000): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const image = new Image();
+    let settled = false;
+    const done = (): void => {
+      if (!settled) {
+        settled = true;
+        clearTimeout(timer);
+        resolve();
+      }
+    };
+    const timer = setTimeout(done, timeoutMs);
+    image.addEventListener(
+      'load',
+      () => {
+        // Decode is best-effort once the bytes are in; never let it wedge.
+        image.decode().catch(() => undefined).finally(done);
+      },
+      { once: true },
+    );
+    image.addEventListener('error', done, { once: true });
+    image.src = src;
+  });
 }
 
 /**
