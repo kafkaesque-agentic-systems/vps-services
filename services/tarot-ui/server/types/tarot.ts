@@ -34,6 +34,18 @@ export interface CardResponse {
   readonly card: TarotCard;
 }
 
+/**
+ * Successful `GET {basePath}/api/reading` body: a card plus an accompanying
+ * random quote, fetched concurrently upstream.
+ *
+ * `quote` is `null` when the quotes upstream failed: the card is the point of
+ * the feature, so a quote failure degrades the reading rather than sinking it.
+ */
+export interface ReadingResponse {
+  readonly card: TarotCard;
+  readonly quote: import('./quote.js').Quote | null;
+}
+
 /** Error body returned by every failing route. Never leaks internals. */
 export interface ErrorResponse {
   readonly error: {

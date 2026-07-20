@@ -8,11 +8,12 @@
 
 import { CardStage } from './components/CardStage.js';
 import { ChooseButton } from './components/ChooseButton.js';
+import { QuoteBlock } from './components/QuoteBlock.js';
 import { useTarotCard } from './hooks/useTarotCard.js';
 
 /** Root component. */
 export function App(): JSX.Element {
-  const { phase, card, error, isDrawing, draw } = useTarotCard();
+  const { phase, card, quote, error, isDrawing, draw } = useTarotCard();
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-between gap-8 px-6 py-10">
@@ -23,8 +24,10 @@ export function App(): JSX.Element {
         <p className="mt-2 text-sm tracking-[0.2em] text-mist uppercase">Tarot</p>
       </header>
 
-      <main className="flex flex-col items-center gap-10">
+      <main className="flex flex-col items-center gap-6">
         <CardStage phase={phase} card={card} />
+
+        <QuoteBlock quote={quote} visible={phase === 'revealing'} />
 
         <div className="flex flex-col items-center gap-4">
           <ChooseButton isDrawing={isDrawing} hasDrawn={card !== null} onChoose={draw} />

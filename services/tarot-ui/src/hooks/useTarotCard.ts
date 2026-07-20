@@ -16,8 +16,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { ApiError, drawCard, preloadImage } from '../lib/api.js';
-import type { TarotCard } from '../types/tarot.js';
+import { ApiError, drawReading, preloadImage } from '../lib/api.js';
+import type { Quote, ReadingResponse, TarotCard } from '../types/tarot.js';
 
 /** Fade length in ms. Must match `transitionDuration.fade` in tailwind.config.ts. */
 export const FADE_MS = 700;
@@ -31,6 +31,12 @@ export interface UseTarotCardResult {
   readonly phase: DrawPhase;
   /** The drawn card, or `null` before the first successful draw. */
   readonly card: TarotCard | null;
+  /**
+   * The quote accompanying the current card, or `null` when none was drawn or
+   * the quotes upstream failed. Always updated in the same render as `card`,
+   * so the pair reveal together and never mismatch.
+   */
+  readonly quote: Quote | null;
   /** User-safe error message, or `null`. */
   readonly error: string | null;
   /** True while a draw is in progress; disables the trigger. */
@@ -62,6 +68,7 @@ function prefersReducedMotion(): boolean {
 export function useTarotCard(): UseTarotCardResult {
   const [phase, setPhase] = useState<DrawPhase>('idle');
   const [card, setCard] = useState<TarotCard | null>(null);
+  const [quote, setQuote] = useState<Quote | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const inFlight = useRef<AbortController | null>(null);
@@ -93,9 +100,9 @@ export function useTarotCard(): UseTarotCardResult {
     void (async (): Promise<void> => {
       try {
         // Fade and fetch run concurrently; the slower one governs.
-        const [drawn] = await Promise.all([
-          drawCard(controller.signal).then(async (result): Promise<TarotCard> => {
-            await preloadImage(result.imageUrl);
+        const [reading] = await Promise.all([
+          drawReading(controller.signal).then(async (result): Promise<ReadingResponse> => {
+            await preloadImage(result.card.imageUrl);
             return result;
           }),
           delay(fadeMs),
@@ -104,7 +111,9 @@ export function useTarotCard(): UseTarotCardResult {
         if (!mounted.current || controller.signal.aborted) {
           return;
         }
-        setCard(drawn);
+        // Card and quote are set in the same commit so they reveal as a pair.
+        setCard(reading.card);
+        setQuote(reading.quote);
         setPhase('revealing');
       } catch (cause) {
         if (!mounted.current || controller.signal.aborted) {
@@ -128,6 +137,7 @@ export function useTarotCard(): UseTarotCardResult {
   return {
     phase,
     card,
+    quote,
     error,
     isDrawing: phase === 'concealing',
     draw,

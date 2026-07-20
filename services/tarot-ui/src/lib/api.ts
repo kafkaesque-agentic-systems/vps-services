@@ -7,7 +7,11 @@
  * rendered blindly.
  */
 
-import { isCardResponse, isErrorResponse, type TarotCard } from '../types/tarot.js';
+import {
+  isErrorResponse,
+  isReadingResponse,
+  type ReadingResponse,
+} from '../types/tarot.js';
 
 /**
  * Base path the app is mounted at.
@@ -50,18 +54,22 @@ export async function preloadImage(src: string): Promise<void> {
 }
 
 /**
- * Draws a random card from the BFF.
+ * Draws a reading -- a random card plus an accompanying quote -- from the BFF.
+ *
+ * The BFF fetches both upstreams concurrently, so this costs a single round
+ * trip. `quote` may be `null` when the quotes upstream failed; the card is
+ * always present on success.
  *
  * @param signal - Abort signal, so an in-flight draw can be cancelled if the
  *   component unmounts.
- * @returns The drawn card, with a reachable `imageUrl`.
+ * @returns The reading, with a reachable card `imageUrl`.
  * @throws {ApiError} On transport failure, a non-2xx status, or a payload that
  *   fails validation.
  */
-export async function drawCard(signal?: AbortSignal): Promise<TarotCard> {
+export async function drawReading(signal?: AbortSignal): Promise<ReadingResponse> {
   let response: Response;
   try {
-    response = await fetch(`${API_BASE}/card`, {
+    response = await fetch(`${API_BASE}/reading`, {
       headers: { accept: 'application/json' },
       ...(signal === undefined ? {} : { signal }),
     });
@@ -86,9 +94,9 @@ export async function drawCard(signal?: AbortSignal): Promise<TarotCard> {
     throw new ApiError('HTTP_ERROR', 'The tarot service returned an error.');
   }
 
-  if (!isCardResponse(payload)) {
+  if (!isReadingResponse(payload)) {
     throw new ApiError('MALFORMED', 'The tarot service returned an unexpected response.');
   }
 
-  return payload.card;
+  return payload;
 }

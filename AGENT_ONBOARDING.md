@@ -341,6 +341,13 @@ Append discoveries here. Newest first. Date, what happened, what to do different
   and exactly one place knows about the discrepancy. It is prefix-configurable
   (`UPSTREAM_IMAGE_PREFIX` / `PUBLIC_IMAGE_PREFIX`) and idempotent, so it needs
   no code change on the day the API is fixed.
+- **Quote API contract** (`GET /quote?json` on the Go server): returns a
+  **one-element array**, not a bare object; the author field is named
+  **`attribution`**, not `author`; and quote text arrives **hard-wrapped with
+  embedded `\n`** that must be collapsed for display. The tarot BFF's
+  `/tarot/api/reading` endpoint fetches card + quote concurrently and treats
+  the quote as optional -- a quote failure degrades to `quote: null` rather
+  than failing the draw.
 - **`GET /tarot/spread` returns 404 by design** -- it is a POST endpoint. A
   `text/plain` 404 means the request *did* reach Gin, which is a useful signal
   when checking whether routing broke: Flask returns HTML 404s, the Node BFF
