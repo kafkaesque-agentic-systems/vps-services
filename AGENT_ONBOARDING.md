@@ -179,7 +179,39 @@ The deploy skill now passes `--no-perms` (host owns permissions) and
 `--omit-dir-times` (the sync root cannot be restamped by a non-owner; that single
 failure fails the whole push with exit 23). Do not remove either.
 
-### 5.5 Silent misconfiguration is this system's dominant failure mode
+### 5.5 A push can never update a single-file bind mount ⚠️
+
+`docker-compose.yml` mounts individual files into containers, most importantly:
+
+```yaml
+- ./prx/nginx.conf:/etc/nginx/nginx.conf
+```
+
+**rsync replaces files atomically** -- it writes a temporary file and renames it
+over the target, which produces a **new inode**. A Docker single-file bind mount
+is bound to the *original* inode, so the container keeps reading the old,
+now-orphaned file. The host shows your change; the container does not.
+
+Symptom: you push an nginx change, `nginx -t` passes, `nginx -s reload` succeeds,
+and the new config still has no effect. Confirm by comparing inodes:
+
+```bash
+ssh thirdeye-vps 'ls -i /opt/micro-services.d/prx/nginx.conf'
+ssh thirdeye-vps 'docker exec quotes-proxy ls -i /etc/nginx/nginx.conf'
+```
+
+Different numbers mean the mount is stale. **Fix: recreate the container** so the
+mount re-resolves:
+
+```bash
+ssh thirdeye-vps 'cd /opt/micro-services.d && set -a && . ./.environs && set +a \
+  && docker compose up -d --force-recreate reverse-proxy'
+```
+
+Reloading nginx is NOT sufficient. This applies to any single-file mount, not
+just nginx.
+
+### 5.6 Silent misconfiguration is this system's dominant failure mode
 
 Every significant incident here presented as something other than its cause:
 
@@ -285,6 +317,43 @@ These wasted real time; they are environment quirks, not repo problems:
 ## 9. Running Log
 
 Append discoveries here. Newest first. Date, what happened, what to do differently.
+
+### 2026-07-20 — tarot front-end (`/tarot`), first new service added
+
+- **New service `tarot-ui`** (container `tarot-frontend`, `172.255.255.7:3000`):
+  React + TypeScript client served by a typed Node BFF, public at
+  `https://api.thirdeye.live/tarot`. Adding a service is now a worked example:
+  compose entry with a static IP on the `quotes` network, an NGINX location, a
+  multi-stage non-root Dockerfile, then build + `up -d <service>` over SSH.
+- **NGINX longest-prefix matching is load-bearing here.** `location /tarot`
+  (the UI) coexists with `location /tarot/card|deck|decks|spread` (the Go API)
+  because NGINX picks the **longest** matching prefix, not the first. The UI
+  therefore receives only `/tarot`, `/tarot/assets/*` and `/tarot/api/*`.
+  **Adding a Go API route at `/tarot/<name>` would shadow a same-named UI
+  route** -- check both sides when adding either.
+- **A push cannot update a single-file bind mount.** Cost real time here: the
+  nginx change was on the host but the container still served the old file.
+  → §5.5. Recreate the container; a reload is not enough.
+- **The upstream `/tarot/card` emits an unreachable image host**
+  (`https://thirdeye.live/static/img/...`); the bytes are at
+  `https://api.thirdeye.live/image/...`. The correction is applied **once,
+  server-side in the BFF**, so the browser never receives a URL it cannot load
+  and exactly one place knows about the discrepancy. It is prefix-configurable
+  (`UPSTREAM_IMAGE_PREFIX` / `PUBLIC_IMAGE_PREFIX`) and idempotent, so it needs
+  no code change on the day the API is fixed.
+- **`GET /tarot/spread` returns 404 by design** -- it is a POST endpoint. A
+  `text/plain` 404 means the request *did* reach Gin, which is a useful signal
+  when checking whether routing broke: Flask returns HTML 404s, the Node BFF
+  returns JSON, Gin returns plain text.
+- **`dist/` is now rsync-excluded.** Front-end build output is produced inside
+  Docker; a `dist/` in the source tree is always a developer-machine artifact,
+  and one built for the wrong platform.
+- **The repo had no `node_modules/` or `dist/` gitignore rule** -- reasonably,
+  since it contained no Node project until now. A `git add -A` after
+  `npm install` therefore staged **6,883 files and 1.66M insertions**. Caught
+  before pushing and amended away; both rules now exist. Lesson: after adding a
+  project in a new language, check `git status --short | wc -l` *before*
+  staging, and never `git add -A` on the first commit of a new toolchain.
 
 ### 2026-07-19 / 20 — first end-to-end deploy, two self-inflicted incidents
 

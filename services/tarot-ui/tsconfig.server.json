@@ -1,0 +1,17 @@
+{
+  "//": "Node BFF build. Unlike the client this DOES emit: tsc is the build tool, output lands in dist/server and is run directly by `node dist/server/index.js`.",
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "composite": true,
+    "lib": ["ES2022"],
+    "module": "NodeNext",
+    "moduleResolution": "nodenext",
+    "types": ["node"],
+    "outDir": "./dist/server",
+    "rootDir": "./server",
+    "noEmit": false,
+    "sourceMap": true,
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.server.tsbuildinfo"
+  },
+  "include": ["server"]
+}

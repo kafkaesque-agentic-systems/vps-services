@@ -80,6 +80,46 @@ services:
       quotes:
         ipv4_address: 172.255.255.4
 
+  # Tarot front-end: React client served by a typed Node BFF.
+  #
+  # The browser talks only to this service; it proxies the Go API internally, so
+  # no upstream address is ever present in shipped JavaScript. Reached publicly
+  # at https://api.thirdeye.live/tarot via the NGINX gateway.
+  #
+  # NOTE ON ROUTING: NGINX matches the LONGEST location prefix, so the existing
+  # /tarot/card, /tarot/deck, /tarot/decks and /tarot/spread blocks continue to
+  # reach the Go API untouched. This service receives only /tarot itself and
+  # paths beneath it that the API does not already claim (/tarot/assets/*,
+  # /tarot/api/*). Adding an API route under /tarot/<name> would shadow a
+  # same-named UI route -- check both when adding either.
+  tarot-ui:
+    image: tarot-frontend:latest
+    container_name: tarot-frontend
+    build:
+      context: ./tarot-ui
+      args:
+        # Must equal BASE_PATH below AND the NGINX location: Vite bakes this
+        # into asset URLs at build time.
+        BASE_PATH: /tarot
+    restart: unless-stopped
+    environment:
+      # Internal address of the Go API. Static IP, consistent with the rest of
+      # the stack -- this network does not use Docker DNS.
+      - TAROT_API_BASE_URL=http://172.255.255.3:8080
+      - BASE_PATH=/tarot
+      - NODE_ENV=production
+      - PORT=3000
+      # Corrects the unreachable image host the Go API emits in card URLs.
+      # Overridable without a rebuild if the upstream is ever fixed.
+      - UPSTREAM_IMAGE_PREFIX=https://thirdeye.live/static/img
+      - PUBLIC_IMAGE_PREFIX=https://api.thirdeye.live/image
+    depends_on:
+      - api
+    # Deliberately NOT published to the host: the gateway is the only ingress.
+    networks:
+      quotes:
+        ipv4_address: 172.255.255.7
+
   api:
     image: quotes-server:latest
     container_name: quotes-server

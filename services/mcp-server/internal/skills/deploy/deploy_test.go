@@ -98,6 +98,7 @@ func TestRsyncExcludesContainsRequiredPatterns(t *testing.T) {
 		"/mcp-server/server": "a Darwin build artifact, meaningless on the Linux VPS",
 		"/mcp-server/logs/":  "local LaunchAgent logs would be swept into VPS snapshots",
 		"deploy_ledgers/":    "ledgers record deploys and must not be shipped by one",
+		"dist/":              "front-end build output is produced inside Docker, never shipped",
 	}
 
 	present := make(map[string]bool, len(rsyncExcludes))

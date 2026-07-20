@@ -14,6 +14,13 @@
 # Local mcp-server LaunchAgent runtime logs (see services/mcp-server/launchd/)
 services/mcp-server/logs/
 
+# Node dependencies and build output. Both are reproducible from package-lock
+# and the source tree, and both are platform-specific: a macOS-native esbuild
+# binary is useless to the linux/amd64 Docker build that actually ships. They
+# are already excluded from the rsync deploy; these rules keep them out of git.
+node_modules/
+dist/
+
 # Cursor IDE rules
 .cursorrules
 

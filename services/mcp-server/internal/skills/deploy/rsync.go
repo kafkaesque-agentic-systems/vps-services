@@ -85,6 +85,12 @@ var rsyncExcludes = []string{
 	"/mcp-server/server",
 	"/mcp-server/logs/",
 
+	// Compiled front-end output. Every service builds inside its own Docker
+	// image, so a dist/ in the source tree is always a developer-machine
+	// artifact -- and one built for the wrong platform at that. Shipping it
+	// would put stale, unused bundles on the VPS and into every snapshot.
+	"dist/",
+
 	// The ledger store itself. Ledgers are a record OF deploys and must never be
 	// shipped BY one, or each push copies the previous push's logs to the VPS.
 	"deploy_ledgers/",
