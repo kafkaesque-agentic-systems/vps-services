@@ -1045,11 +1045,19 @@ sequenceDiagram
 
 | Requirement | Notes |
 |-------------|-------|
-| Local mcp-server | `go run ./cmd/server` on the machine holding the repo checkout |
+| Local mcp-server | `services/mcp-server/run-local.sh` (sources `.env`, fails fast on missing config, pins `MCP_SKILLS=deploy`). Raw `go run ./cmd/server` also works but skips those guards. |
 | `rsync` + SSH | Passwordless SSH key auth to the VPS (`DEPLOY_SSH_TARGET`) |
-| `DEPLOY_SSH_TARGET` | e.g. `deploy@your-vps` |
+| `DEPLOY_SSH_TARGET` | An **`~/.ssh/config` alias** (e.g. `thirdeye-vps`), not `user@host` — SSH runs on a **non-default port (43076)** because UFW filters `22` to a stale source IP. An alias keeps the port in one place; a bare `user@host` target silently hangs on connect. |
 | `MCP_SECRET_TOKEN` | Same secret used for production MCP (pre-flight auth) |
-| Optional `DEPLOY_LOCAL_ROOT` | Defaults to repo root (directory containing `docker-compose.yml`) |
+| Optional `DEPLOY_LOCAL_ROOT` | Defaults to repo root (directory containing `docker-compose.yml`). Trailing slash is significant to rsync — it syncs directory *contents*, not the directory itself. |
+
+**Running the local instance permanently (macOS).** Rather than holding a foreground process, the local instance can run as a LaunchAgent (`live.thirdeye.vps-mcp-deploy`) that starts at login and restarts on crash. It is restricted to `MCP_SKILLS=deploy`, so a credentialed background agent on a laptop exposes only `push_codebase` — never `system_down`, `snapshot_restore`, or `db_delete`.
+
+```bash
+services/mcp-server/launchd/install.sh install|status|uninstall
+```
+
+Full setup, client registration (Claude Code `.mcp.json` vs Claude Desktop), and the security rationale: [`mcp-server/README.md`](mcp-server/README.md) § *Running the local instance as a background agent*.
 
 #### Three-step lifecycle
 
@@ -1061,18 +1069,22 @@ sequenceDiagram
 
 | Flag / pattern | Purpose |
 |----------------|---------|
-| `-a` | Archive mode (permissions, timestamps) |
+| `-a` | Archive mode (ownership, timestamps, recursion) |
 | `-z` | Compress during transfer |
 | `--delete` | Remove stale files on VPS absent locally |
 | `-i` / `--itemize-changes` | Detailed per-file change ledger |
+| `--omit-dir-times` | Do **not** set directory mtimes. The sync root is owned by the container's `mcp` user; the deploy user reaches it only via group write and cannot restamp it. Without this, one `failed to set times on "."` fails the entire push with exit 23. |
+| `--no-perms` | Do **not** transfer file modes. Cancels the `-p` implied by `-a`, so the **host** stays authoritative over production permissions rather than the developer's machine. |
 | `--log-file=deploy_ledgers/...` | Persist ledger locally (never pushed to VPS) |
-| `-e "ssh -o BatchMode=yes"` | Non-interactive SSH — fails fast if key auth is unavailable instead of hanging the MCP handler on a password prompt |
+| `-e "ssh -o BatchMode=yes -o ConnectTimeout=10"` | Non-interactive SSH. `BatchMode` fails fast when key auth is unavailable instead of hanging on a password prompt; `ConnectTimeout` additionally bounds **connection** establishment, which `BatchMode` does not cover. |
 
 The entire rsync invocation is additionally bounded by a **30-minute timeout** (context-derived, so client cancellation still propagates first); the pre-flight `snapshot_create` call is bounded by 10 minutes.
 
-**Excluded paths (never synced, and protected from `--delete`):** `.git/`, `node_modules/`, `.venv/`, `__pycache__/`, `.env`, `.environs`, `image/`, `vol/`, `snapshots/`, `.bak-*`, `deploy_ledgers/`
+**Excluded paths (never synced, and protected from `--delete`):** `.git/`, `node_modules/`, `.venv/`, `__pycache__/`, `.env`, `.environs`, `image/`, `vol/`, `snapshots/`, `.bak-*`, `*.bak-*`, `/mcp-server/server`, `/mcp-server/logs/`, `deploy_ledgers/`
 
 The `image/` and `vol/` exclusions mirror `snapshot_create` — persistent runtime assets on the VPS remain untouched by code pushes. The `snapshots/` and `.bak-*` exclusions are **load-bearing** since the 2026-07-14 layout migration: both live inside the sync root, and without these entries `rsync --delete` would erase every snapshot archive and restore backup on the first push.
+
+`*.bak-*` closes a gap in `.bak-*`, which matches only basenames *beginning* with `.bak-` and therefore missed operator copies such as `.env.bak-<timestamp>` — a file carrying `MCP_SECRET_TOKEN` into the VPS tree and from there into every subsequent snapshot archive. The two anchored `/mcp-server/…` patterns exclude the developer machine's own build and runtime artifacts: `server` is a Darwin binary that is meaningless on the Linux VPS, and `logs/` is the local LaunchAgent's output.
 
 #### Itemized ledger legend
 
@@ -1105,6 +1117,28 @@ After a successful `push_codebase`:
 - **`--delete` removes stale remote code** — files present on the VPS but absent locally are deleted. Exclusions protect secrets and persistent data.
 - **Production go-mcp will fail `push_codebase`** by design — set `DEPLOY_*` only on the local MCP process.
 - **`deploy_ledgers/` is gitignored** — audit logs stay local and are never rsync'd to the VPS.
+- **`--no-perms` — the host owns file permissions.** rsync `-a` implies `-p`, which would make the *developer's machine* authoritative over production file modes. Pushing local `0640`/`0750` modes onto files the `go-mcp` container reads broke `snapshot_create` on 2026-07-19 while every service still reported healthy. Deploys carry **content**; the server's permission model is deliberate and stays authoritative. Do not remove this flag.
+- **`--omit-dir-times` — the sync root cannot be restamped.** `/opt/micro-services.d/` is owned by the container's `mcp` user (uid 100) so `snapshot_create` can write from inside; the deploy user reaches it only through group write, which permits creating entries but not setting the directory's mtime. Without this flag that single `failed to set times on "."` fails the **entire** push with exit 23 even when all content transferred.
+- **`ConnectTimeout=10` bounds SSH connect.** `BatchMode=yes` bounds *authentication*, not *connection*. Without it an unreachable or firewalled host leaves rsync blocking until the 30-minute ceiling — long past the MCP client's own timeout — surfacing only as an opaque request timeout with a zero-byte ledger and the real cause reported nowhere.
+
+#### ⚠️ `system_up` and `system_down` can self-terminate
+
+**The compose client runs *inside* the `go-mcp` container.** When compose recreates or stops `go-mcp`, it kills the very process issuing the command.
+
+- `system_down` — long-documented: teardown may complete only partially, and the success report never arrives because the SSE stream dies with the container.
+- **`system_up` carries the same hazard, and it is far less obvious.** On 2026-07-19 a routine `system_up` (no `build`, reasoned to be idempotent) recreated `go-mcp`, killed the compose process mid-run, and left **`quotes-server` and `quotes-frontend` stopped but never restarted** — a ~4 minute production outage. `docker compose up -d` is idempotent *in general*; it is **not safe here**, because the client is one of the containers it manages.
+
+**Prefer driving compose over SSH**, where nothing you depend on is killed mid-operation:
+
+```bash
+ssh thirdeye-vps 'cd /opt/micro-services.d && set -a && . ./.environs && set +a && docker compose up -d'
+```
+
+Sourcing `.environs` is mandatory — `docker-compose.yml` uses the required forms `${DOCKER_GID:?…}` and `${CODEBASE_GID:?…}`, which abort the run when unset (by design).
+
+> See [`AGENT_ONBOARDING.md`](../AGENT_ONBOARDING.md) at the repository root for the
+> operational hazard list, cold-start verification steps, and the running log of
+> incidents and their causes.
 
 ---
 
@@ -1308,6 +1342,9 @@ These behaviors are present in the current codebase and may affect operations:
 | `RECAPTCHA_PRIVATE_KEY` | web | Yes | reCAPTCHA secret key (fail-closed; was hard-coded — Audit C-3) |
 | `MCP_SECRET_TOKEN` | go-mcp | Yes | Shared Bearer secret for MCP clients |
 | `PORT` | go-mcp | No | MCP listen port (default `8080`) |
+| `DOCKER_GID` | go-mcp | **Yes** | Host `docker` group GID (`getent group docker`; currently `116`), added via `group_add` so the container can reach `/var/run/docker.sock`. Uses the **required** form `${DOCKER_GID:?…}` — an unset value aborts the compose run. A previous `:-999` default silently resolved to the wrong group and disabled every docker tool (incident 2026-07-19). |
+| `CODEBASE_GID` | go-mcp | **Yes** | Host group owning the deployed tree (`getent group kafka`; currently `1000`), added via `group_add` so `snapshot_create` can **read** group-only files (`0640` DKIM key and `mail.py`, `0750` scripts) when tarring from inside the container. Without it the snapshot aborts with `Cannot open: Permission denied` — silently losing the rollback safety net while all services still report healthy. |
+| `MCP_SKILLS` | go-mcp | No | Comma-separated least-privilege skill allowlist: `system`, `snapshot`, `docker`, `deploy`, `database`. **Unset registers every skill — the production configuration.** The developer's local instance sets `MCP_SKILLS=deploy` so it exposes only `push_codebase`. Unknown names are **fatal at startup**, never ignored, so a typo cannot silently shrink the tool surface. |
 | `MCP_MONGO_USERNAME` | go-mcp | Recommended | Scoped `mcp_agent` MongoDB user for the database skill (preferred over root fallback) |
 | `MCP_MONGO_PASSWORD` | go-mcp | Recommended | Password for `mcp_agent` |
 | `MCP_MONGO_URI` | go-mcp | No | Full MongoDB connection-string override (wins over all component variables) |
@@ -1347,6 +1384,7 @@ These behaviors are present in the current codebase and may affect operations:
 
 | Document | Location | Contents |
 |----------|----------|----------|
+| **Agent onboarding & running log** | [`../AGENT_ONBOARDING.md`](../AGENT_ONBOARDING.md) | **Start here for operational work.** Pipeline model, the two MCP servers, out-of-band SSH access, the hazard list (including `system_up` self-termination), cold-start verification, and a dated running log of incidents and their real causes. |
 | Security remediation ledger | [`SECURITY-REMEDIATION.md`](SECURITY-REMEDIATION.md) | 2026-07 audit findings, remediation status, verification notes |
 | Deployment pre-flight | [`DEPLOYMENT-PREFLIGHT.md`](DEPLOYMENT-PREFLIGHT.md) | Post-remediation checklist: rotation, env, indexes, build, smoke tests, rollback |
 | MCP server README | [`mcp-server/README.md`](mcp-server/README.md) | MCP architecture, tools, testing, deployment |
