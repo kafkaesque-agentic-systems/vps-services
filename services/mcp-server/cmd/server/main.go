@@ -4,11 +4,14 @@ import (
 	"cmp"
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"sort"
+	"strings"
 	"syscall"
 	"time"
 
@@ -29,6 +32,12 @@ import (
 const (
 	// portEnvVar names the environment variable that selects the listen port.
 	portEnvVar = "PORT"
+
+	// skillsEnvVar names the environment variable that restricts which skill
+	// domains are registered. Unset or empty registers every skill (the
+	// production default); a comma-separated allowlist registers only those
+	// named. See registerCustomSkills.
+	skillsEnvVar = "MCP_SKILLS"
 
 	// defaultPort is used when PORT is unset. 8080 is the conventional
 	// container-internal HTTP port and matches the Nginx upstream configured in
@@ -95,7 +104,12 @@ func main() {
 
 	// --- MCP engine + skills ------------------------------------------------
 	server := mcpengine.NewServer()
-	registerCustomSkills(server)
+	// Fail fast on an invalid MCP_SKILLS value: starting with a silently
+	// reduced tool surface is worse than not starting at all, because the
+	// missing tools only surface as confusing errors at call time.
+	if err := registerCustomSkills(server); err != nil {
+		log.Fatalf("skill registration failed: %v", err)
+	}
 
 	// --- Transport + routing ------------------------------------------------
 	transport := mcpengine.NewSSETransport(server)
@@ -213,25 +227,134 @@ func handleHealthz(w http.ResponseWriter, _ *http.Request) {
 // connecting clients. main() calls this immediately after constructing the
 // server and before wiring the transport, satisfying that requirement.
 //
+// # Skill selection (MCP_SKILLS)
+//
+// By default every skill registers, which is the production configuration. A
+// deployment that only needs a subset — most notably a developer's LOCAL
+// instance, which exists solely to serve push_codebase — can restrict the
+// surface with a comma-separated allowlist:
+//
+//	MCP_SKILLS=deploy      # registers ONLY push_codebase
+//	MCP_SKILLS=system,docker
+//	(unset)                # registers everything (production default)
+//
+// This is least-privilege enforced at registration: an instance that never
+// registers the docker or database skills cannot be induced to run
+// system_down or db_delete no matter what a client asks for.
+//
 // The parameter is the constructed but not-yet-connected *mcp.Server.
-func registerCustomSkills(server *mcp.Server) {
-	// The "system" skill: operational tools (health/uptime probe, server time).
-	system.Register(server)
+func registerCustomSkills(server *mcp.Server) error {
+	spec := os.Getenv(skillsEnvVar)
 
-	// The "snapshot" skill: VPS codebase archive before AI-driven changes.
-	snapshot.Register(server)
+	selected, err := selectSkills(spec)
+	if err != nil {
+		return err
+	}
 
-	// The "docker" skill: compose lifecycle (system_down / system_up / system_logs).
-	docker.Register(server)
+	for _, s := range selected {
+		s.register(server)
+	}
 
-	// The "deploy" skill: local-to-VPS rsync push (push_codebase; local MCP only).
-	deploy.Register(server)
+	// Announce a restricted surface loudly. The unrestricted case stays quiet
+	// because each skill already logs its own registration line.
+	if strings.TrimSpace(spec) != "" {
+		names := make([]string, 0, len(selected))
+		for _, s := range selected {
+			names = append(names, s.name)
+		}
+		log.Printf("skills: %s=%q -> RESTRICTED surface, registered only: %s",
+			skillsEnvVar, spec, strings.Join(names, ", "))
+	}
 
-	// The "database" skill: native MongoDB tooling (db_* / user_* tools).
-	// Read tools always register; write tools require MCP_DB_ALLOW_WRITES=true
+	return nil
+}
+
+// skillRegistrar binds a skill's canonical name to its registration function.
+type skillRegistrar struct {
+	name     string
+	register func(*mcp.Server)
+}
+
+// allSkills is the ordered, canonical set of skills this binary can serve.
+//
+// It is the single source of truth for both the default registration set and
+// the names MCP_SKILLS accepts, so adding a skill here extends both at once.
+// Registration order is preserved: skills MUST be registered before the
+// transport begins serving so the first initialize handshake advertises the
+// complete tool set.
+var allSkills = []skillRegistrar{
+	// Operational tools (health/uptime probe, server time).
+	{"system", system.Register},
+	// VPS codebase archive before AI-driven changes.
+	{"snapshot", snapshot.Register},
+	// Compose lifecycle (system_down / system_up / system_logs).
+	{"docker", docker.Register},
+	// Local-to-VPS rsync push (push_codebase; local MCP only).
+	{"deploy", deploy.Register},
+	// Native MongoDB tooling (db_* / user_* tools). Read tools always
+	// register; write tools additionally require MCP_DB_ALLOW_WRITES=true
 	// (fail-closed, approved decision #3).
-	database.Register(server)
+	{"database", database.Register},
+}
 
-	// Register additional skill domains here as they are implemented, e.g.:
-	//   weather.Register(server)
+// selectSkills resolves an MCP_SKILLS specification into the ordered set of
+// skills to register.
+//
+// An empty or whitespace-only spec selects every skill, preserving the
+// production default so existing deployments are unaffected. A non-empty spec
+// is a comma-separated, case-insensitive allowlist of names from allSkills.
+//
+// Unknown names are rejected rather than ignored. A typo such as "deply" would
+// otherwise silently register nothing and surface much later as a confusing
+// "unknown tool" error at call time — the same class of silent-misconfiguration
+// failure as the DOCKER_GID default that disabled the docker skill in the
+// 2026-07-19 incident.
+//
+// It returns the selected registrars in allSkills order, or an error naming the
+// offending values alongside the valid set.
+func selectSkills(spec string) ([]skillRegistrar, error) {
+	if strings.TrimSpace(spec) == "" {
+		return allSkills, nil
+	}
+
+	wanted := make(map[string]bool)
+	for _, raw := range strings.Split(spec, ",") {
+		if name := strings.ToLower(strings.TrimSpace(raw)); name != "" {
+			wanted[name] = true
+		}
+	}
+	if len(wanted) == 0 {
+		return nil, fmt.Errorf("%s=%q contains no skill names; valid names: %s",
+			skillsEnvVar, spec, strings.Join(skillNames(), ", "))
+	}
+
+	selected := make([]skillRegistrar, 0, len(wanted))
+	for _, s := range allSkills {
+		if wanted[s.name] {
+			selected = append(selected, s)
+			delete(wanted, s.name)
+		}
+	}
+
+	if len(wanted) > 0 {
+		unknown := make([]string, 0, len(wanted))
+		for name := range wanted {
+			unknown = append(unknown, name)
+		}
+		sort.Strings(unknown) // deterministic message for tests and operators
+		return nil, fmt.Errorf("%s=%q names unknown skill(s): %s; valid names: %s",
+			skillsEnvVar, spec, strings.Join(unknown, ", "), strings.Join(skillNames(), ", "))
+	}
+
+	return selected, nil
+}
+
+// skillNames returns the canonical skill names in registration order, for use
+// in operator-facing error messages.
+func skillNames() []string {
+	names := make([]string, 0, len(allSkills))
+	for _, s := range allSkills {
+		names = append(names, s.name)
+	}
+	return names
 }
