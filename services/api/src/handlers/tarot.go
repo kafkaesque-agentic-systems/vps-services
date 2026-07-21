@@ -16,11 +16,6 @@ import (
 
 // SECURITY / STABILITY (Audit C-6) constants.
 const (
-    // deckCount is the number of tarot decks stored in tarotdb.tdata, keyed
-    // 1..deckCount. Replaces the magic expression rand.Intn(70-1)+1 that was
-    // repeated across handlers.
-    deckCount = 69
-
     // maxSpreadPositions caps the number of positions a client may request in
     // a custom spread. Without a cap, a body with tens of thousands of
     // positions triggered one aggregation pipeline PER position in "all"
@@ -34,9 +29,37 @@ const (
 // API is deprecated, and re-seeding on every request meant concurrent requests
 // landing in the same nanosecond drew IDENTICAL "random" sequences.
 
-// randomDeckNumber returns a uniformly distributed deck key in [1, deckCount].
-func randomDeckNumber() int {
-    return rand.Intn(deckCount) + 1
+// NOTE (2026-07-21): random deck selection previously GUESSED a numeric key
+// via rand.Intn over a hardcoded deckCount of 69. The data actually holds 70
+// decks numbered 1..72 with gaps at 9 and 43, so ~3% of draws sampled a
+// missing key and returned HTTP 500 ("deck sample returned no cards" /
+// decode error), compounding per position in "all"-mode spreads — while
+// decks 70..72 could never be drawn at all. Selection now samples an ACTUAL
+// document with $sample, which follows the data wherever its keys go and
+// removed the deckCount constant entirely.
+
+// sampleDeck returns one uniformly random deck document via a $sample
+// aggregation. Sampling documents rather than guessing numeric keys keeps
+// every existing deck reachable and cannot select a key that has no document.
+func (handler *TarotHandler) sampleDeck(ctx context.Context) (models.Deck, error) {
+    cursor, err := handler.collection.Aggregate(ctx, bson.A{
+        bson.D{{"$sample", bson.D{{"size", 1}}}},
+    })
+    if err != nil {
+        return models.Deck{}, err
+    }
+
+    var decks []models.Deck
+    if err = cursor.All(ctx, &decks); err != nil {
+        return models.Deck{}, err
+    }
+
+    // Defensive: an empty collection is the only way $sample yields nothing.
+    if len(decks) == 0 {
+        return models.Deck{}, errors.New("deck sample returned no documents")
+    }
+
+    return decks[0], nil
 }
 
 // TarotHandler : handler router
@@ -91,14 +114,17 @@ func (handler *TarotHandler) TarotSpreadHandler(c *gin.Context) {
     // the client disconnects (fail-safe resource release; Audit C-10).
     ctx := c.Request.Context()
 
-    var cur *mongo.SingleResult
-
     if spread.Deck == "all" {
 
         layout := make(map[string]string)
         for _, v := range spread.Positions {
+            // Stage order preserves the original draw semantics: pick ONE
+            // deck uniformly ($sample over documents), then one card
+            // uniformly within it ($unwind + $sample). Sampling documents
+            // instead of $match-ing a guessed numeric key is the 2026-07-21
+            // fix — a guessed key could name a gap and match nothing.
             cursor, err := handler.collection.Aggregate(ctx, bson.A{
-                bson.D{{"$match", bson.D{{"deck", randomDeckNumber()}}}},
+                bson.D{{"$sample", bson.D{{"size", 1}}}},
                 bson.D{{"$unwind", bson.D{{"path", "$cards"}}}},
                 bson.D{{"$sample", bson.D{{"size", 1}}}},
                 bson.D{{"$unset", bson.A{"_id", "deck", "name"}}},
@@ -154,15 +180,17 @@ func (handler *TarotHandler) TarotSpreadHandler(c *gin.Context) {
 
         return
 
-    } else if spread.Deck == "any" {
-        cur = handler.collection.FindOne(ctx, bson.M{"deck": randomDeckNumber()})
-
-    } else {
-        cur = handler.collection.FindOne(ctx, bson.M{"name": spread.Deck})
     }
 
     var deck models.Deck
-    err := cur.Decode(&deck)
+    var err error
+
+    if spread.Deck == "any" {
+        deck, err = handler.sampleDeck(ctx)
+    } else {
+        err = handler.collection.FindOne(ctx, bson.M{"name": spread.Deck}).Decode(&deck)
+    }
+
     if err != nil {
         c.JSON(
             http.StatusInternalServerError,
@@ -250,10 +278,7 @@ func (handler *TarotHandler) TarotDeckHandler(c *gin.Context) {
 // @failure      500       {object}  models.ErrorResponse          "server error"
 // @router       /tarot/card [get]
 func (handler *TarotHandler) RandomCardHandler(c *gin.Context) {
-    cur := handler.collection.FindOne(c.Request.Context(), bson.M{"deck": randomDeckNumber()})
-
-    var deck models.Deck
-    err := cur.Decode(&deck)
+    deck, err := handler.sampleDeck(c.Request.Context())
     if err != nil {
         c.JSON(
             http.StatusInternalServerError,
@@ -298,10 +323,7 @@ func (handler *TarotHandler) RandomCardHandler(c *gin.Context) {
 // @failure      500       {object}  models.ErrorResponse          "server error"
 // @router       /tarot/deck [get]
 func (handler *TarotHandler) RandomDeckHandler(c *gin.Context) {
-    cur := handler.collection.FindOne(c.Request.Context(), bson.M{"deck": randomDeckNumber()})
-
-    var deck models.Deck
-    err := cur.Decode(&deck)
+    deck, err := handler.sampleDeck(c.Request.Context())
     if err != nil {
         c.JSON(
             http.StatusInternalServerError,
