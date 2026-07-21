@@ -57,4 +57,3 @@ type TarotNotFoundResponse struct {
 	Status int    `json:"status"`
 	Err    string `json:"error"`
 }
-

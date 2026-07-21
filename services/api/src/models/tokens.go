@@ -11,5 +11,5 @@ type TokenRequest struct {
 
 // TokenQueryResponse : Token Response Data
 type TokenQueryResponse struct {
-       Result int
+	Result int
 }

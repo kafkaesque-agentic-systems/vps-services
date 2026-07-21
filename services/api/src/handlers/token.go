@@ -1,9 +1,9 @@
 package handlers
 
 import (
-	"strings"
 	"context"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"go.mongodb.org/mongo-driver/bson"
@@ -66,10 +66,10 @@ func (handler *TokenHandler) EmailExists(c *gin.Context) {
 	if err != nil {
 		if mongo.IsDuplicateKeyError(err) {
 			c.JSON(
-                            http.StatusOK,
-			    models.TokenQueryResponse{
-				Result: 1,
-			    })
+				http.StatusOK,
+				models.TokenQueryResponse{
+					Result: 1,
+				})
 
 			return
 		}
