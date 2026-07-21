@@ -329,11 +329,16 @@ Append discoveries here. Newest first. Date, what happened, what to do different
 - **The UI page had to avoid `/tarot/spread` as a URL** — NGINX prefix-routes
   it (and anything it string-prefixes, including `/tarot/spreads`) to the Go
   API. The page lives at `/tarot/reading`.
-- **Known upstream bug (flagged as a task, unfixed):** tarotdb.tdata holds 70
-  docs numbered 1..72 with **9 and 43 missing**, while the Go handler samples
-  a hardcoded 1..69. Result: ~3% of random draws 500 ("deck sample returned
-  no cards"), compounding per position in `deck:"all"` spreads, and decks
-  70-72 are unreachable. Also 70 docs / 69 distinct names — one duplicate.
+- **Upstream deck-sampling bug — FIXED 2026-07-21** (`b6a3ef8`): tarotdb.tdata
+  holds 70 docs numbered 1..72 with 9 and 43 missing, while the Go handler
+  sampled a hardcoded 1..69 — ~3% of random draws 500'd and decks 70-72 were
+  unreachable. Fixed by sampling actual documents with `$sample` instead of
+  guessing keys; measured 0/60 and 0/20 failures post-deploy, formerly
+  unreachable decks now drawn. Draw semantics preserved (uniform deck, then
+  uniform card). NOTE: an earlier claim of a duplicated deck name was WRONG —
+  $group-by-name found 70 distinct names for 70 docs; the gaps were the only
+  defect. Lesson: count before asserting; the "69 names" figure had been
+  eyeballed from the deckCount constant, not measured.
 - **The product position cap is 10** (Celtic Cross), enforced in the BFF and
   the composer; the Go API's own cap is 78.
 
