@@ -11,8 +11,83 @@ import type { NextFunction, Request, Response } from 'express';
 import type { AppConfig } from '../config.js';
 import { logger } from '../logger.js';
 import { fetchRandomQuote } from '../services/quote.service.js';
+import { fetchDeckNames, fetchSpread } from '../services/spread.service.js';
 import { fetchRandomCard } from '../services/tarot.service.js';
-import type { CardResponse, ReadingResponse } from '../types/tarot.js';
+import type { DeckListResponse, SpreadDrawRequest } from '../types/spread.js';
+import type { CardResponse, ErrorResponse, ReadingResponse } from '../types/tarot.js';
+
+/**
+ * Maximum positions accepted for a custom spread.
+ *
+ * The Go API allows 78, but a 78-card wall of thumbnails is a UI failure, so
+ * the product ceiling is 10 -- the size of a Celtic Cross. Enforced here as
+ * well as in the client, because the client is advisory and this boundary is
+ * not.
+ */
+const MAX_SPREAD_POSITIONS = 10;
+
+/** Longest accepted spread name / position label, defence against abuse. */
+const MAX_NAME_LENGTH = 100;
+const MAX_POSITION_LENGTH = 40;
+const MAX_DECK_LENGTH = 64;
+
+/**
+ * Validates and normalises an untrusted request body into a
+ * {@link SpreadDrawRequest}.
+ *
+ * Positions are trimmed and must be unique case-insensitively: the upstream
+ * keys its response map by position, so duplicates would silently collapse
+ * into a single entry and the reading would come back short.
+ *
+ * @param body - Parsed request body of unknown shape.
+ * @returns The normalised request, or a human-readable rejection reason.
+ */
+function parseSpreadBody(body: unknown): SpreadDrawRequest | { readonly reason: string } {
+  if (typeof body !== 'object' || body === null) {
+    return { reason: 'request body must be a JSON object' };
+  }
+  const candidate = body as Record<string, unknown>;
+
+  const rawName = candidate['name'];
+  if (rawName !== undefined && typeof rawName !== 'string') {
+    return { reason: 'name must be a string' };
+  }
+  const name = (rawName ?? '').trim().slice(0, MAX_NAME_LENGTH) || 'Custom Spread';
+
+  const rawDeck = candidate['deck'];
+  if (typeof rawDeck !== 'string' || rawDeck.trim() === '' || rawDeck.length > MAX_DECK_LENGTH) {
+    return { reason: 'deck must be a non-empty string' };
+  }
+  const deck = rawDeck.trim();
+
+  const rawPositions = candidate['positions'];
+  if (!Array.isArray(rawPositions)) {
+    return { reason: 'positions must be an array' };
+  }
+  if (rawPositions.length === 0 || rawPositions.length > MAX_SPREAD_POSITIONS) {
+    return { reason: `positions must contain between 1 and ${MAX_SPREAD_POSITIONS} entries` };
+  }
+
+  const positions: string[] = [];
+  const seen = new Set<string>();
+  for (const entry of rawPositions) {
+    if (typeof entry !== 'string') {
+      return { reason: 'every position must be a string' };
+    }
+    const position = entry.trim();
+    if (position === '' || position.length > MAX_POSITION_LENGTH) {
+      return { reason: `positions must be 1-${MAX_POSITION_LENGTH} characters` };
+    }
+    const key = position.toLowerCase();
+    if (seen.has(key)) {
+      return { reason: `duplicate position "${position}" - position names must be unique` };
+    }
+    seen.add(key);
+    positions.push(position);
+  }
+
+  return { name, deck, positions };
+}
 
 /** Express handler signature used by this module. */
 export type Handler = (req: Request, res: Response, next: NextFunction) => Promise<void> | void;
@@ -74,6 +149,61 @@ export function makeGetReading(config: AppConfig): Handler {
 
       const body: ReadingResponse = { card, quote: quoteResult };
       res.setHeader('Cache-Control', 'no-store');
+      res.status(200).json(body);
+    } catch (error) {
+      next(error);
+    }
+  };
+}
+
+/**
+ * Builds the `POST {basePath}/api/spread` handler.
+ *
+ * Validation happens HERE, at this service's own boundary, rather than by
+ * forwarding junk upstream and relaying whatever Gin says: the rejection
+ * messages stay meaningful to this UI's vocabulary, and malformed bodies never
+ * leave the process.
+ *
+ * @param config - Runtime configuration.
+ * @returns An Express handler returning a spread reading with cards in
+ *   request-position order.
+ */
+export function makePostSpread(config: AppConfig): Handler {
+  return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const parsed = parseSpreadBody(req.body);
+      if ('reason' in parsed) {
+        const body: ErrorResponse = {
+          error: { code: 'INVALID_SPREAD', message: parsed.reason },
+        };
+        res.status(400).json(body);
+        return;
+      }
+
+      const reading = await fetchSpread(config, parsed);
+      res.setHeader('Cache-Control', 'no-store');
+      res.status(200).json(reading);
+    } catch (error) {
+      next(error);
+    }
+  };
+}
+
+/**
+ * Builds the `GET {basePath}/api/decks` handler.
+ *
+ * The catalogue changes rarely, so responses are cacheable for an hour --
+ * unlike the draws, which are `no-store` by nature.
+ *
+ * @param config - Runtime configuration.
+ * @returns An Express handler returning the sorted deck names.
+ */
+export function makeGetDecks(config: AppConfig): Handler {
+  return async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const names = await fetchDeckNames(config);
+      const body: DeckListResponse = { names };
+      res.setHeader('Cache-Control', 'public, max-age=3600');
       res.status(200).json(body);
     } catch (error) {
       next(error);

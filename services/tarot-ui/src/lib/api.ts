@@ -8,9 +8,12 @@
  */
 
 import {
+  isDeckList,
   isErrorResponse,
   isReadingResponse,
+  isSpreadReading,
   type ReadingResponse,
+  type SpreadReading,
 } from '../types/tarot.js';
 
 /**
@@ -81,23 +84,30 @@ export function preloadImage(src: string, timeoutMs = 4000): Promise<void> {
 }
 
 /**
- * Draws a reading -- a random card plus an accompanying quote -- from the BFF.
+ * Shared BFF request pipeline: fetch, parse, map error bodies, validate.
  *
- * The BFF fetches both upstreams concurrently, so this costs a single round
- * trip. `quote` may be `null` when the quotes upstream failed; the card is
- * always present on success.
+ * Every endpoint follows the same discipline -- a 200 with an unexpected body
+ * is a failure, not something to render blindly -- so the boilerplate lives
+ * once here.
  *
- * @param signal - Abort signal, so an in-flight draw can be cancelled if the
- *   component unmounts.
- * @returns The reading, with a reachable card `imageUrl`.
+ * @param path - Path under the API base, beginning with `/`.
+ * @param guard - Type guard the payload must satisfy.
+ * @param init - Extra fetch options (method, headers, body).
+ * @param signal - Abort signal for unmount cancellation.
  * @throws {ApiError} On transport failure, a non-2xx status, or a payload that
- *   fails validation.
+ *   fails validation. Abort errors propagate untouched.
  */
-export async function drawReading(signal?: AbortSignal): Promise<ReadingResponse> {
+async function requestJson<T>(
+  path: string,
+  guard: (value: unknown) => value is T,
+  init?: RequestInit,
+  signal?: AbortSignal,
+): Promise<T> {
   let response: Response;
   try {
-    response = await fetch(`${API_BASE}/reading`, {
-      headers: { accept: 'application/json' },
+    response = await fetch(`${API_BASE}${path}`, {
+      ...init,
+      headers: { accept: 'application/json', ...init?.headers },
       ...(signal === undefined ? {} : { signal }),
     });
   } catch (cause) {
@@ -121,9 +131,63 @@ export async function drawReading(signal?: AbortSignal): Promise<ReadingResponse
     throw new ApiError('HTTP_ERROR', 'The tarot service returned an error.');
   }
 
-  if (!isReadingResponse(payload)) {
+  if (!guard(payload)) {
     throw new ApiError('MALFORMED', 'The tarot service returned an unexpected response.');
   }
 
   return payload;
+}
+
+/**
+ * Draws a reading -- a random card plus an accompanying quote -- from the BFF.
+ *
+ * The BFF fetches both upstreams concurrently, so this costs a single round
+ * trip. `quote` may be `null` when the quotes upstream failed; the card is
+ * always present on success.
+ *
+ * @param signal - Abort signal, so an in-flight draw can be cancelled if the
+ *   component unmounts.
+ */
+export function drawReading(signal?: AbortSignal): Promise<ReadingResponse> {
+  return requestJson('/reading', isReadingResponse, undefined, signal);
+}
+
+/** The body sent to `POST /tarot/api/spread`. */
+export interface SpreadDraft {
+  readonly name: string;
+  readonly deck: string;
+  readonly positions: readonly string[];
+}
+
+/**
+ * Draws a custom spread from the BFF.
+ *
+ * Cards come back in the order the positions were requested; the BFF restores
+ * the ordering the upstream's map response destroys.
+ *
+ * @param draft - Spread name, deck selection, and ordered positions.
+ * @param signal - Abort signal, so an in-flight draw can be cancelled.
+ */
+export function drawSpread(draft: SpreadDraft, signal?: AbortSignal): Promise<SpreadReading> {
+  return requestJson(
+    '/spread',
+    isSpreadReading,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(draft),
+    },
+    signal,
+  );
+}
+
+/**
+ * Fetches the deck catalogue for the spread composer.
+ *
+ * @param signal - Abort signal, so the fetch can be cancelled on unmount.
+ * @returns Sorted deck names.
+ */
+export async function fetchDecks(signal?: AbortSignal): Promise<readonly string[]> {
+  const list = await requestJson('/decks', isDeckList, undefined, signal);
+  return list.names;
 }

@@ -7,19 +7,9 @@
  */
 
 import type { DrawPhase } from '../hooks/useTarotCard.js';
+import { formatDeckName } from '../lib/format.js';
+import { CARD_BACK_SRC } from '../lib/images.js';
 import type { TarotCard } from '../types/tarot.js';
-
-/**
- * Base URL of the card image store.
- *
- * Root-relative by default: behind the NGINX gateway the image store is served
- * on this app's own origin, which keeps the bundle free of any hard-coded
- * domain. Override with `VITE_IMAGE_BASE` to run outside the gateway.
- */
-const IMAGE_BASE = import.meta.env.VITE_IMAGE_BASE ?? '/image';
-
-/** Card back shown while the card is face down. */
-const CARD_BACK_SRC = `${IMAGE_BASE}/tarot/back-images/back-01.jpg`;
 
 /** Props for {@link CardStage}. */
 export interface CardStageProps {
@@ -27,15 +17,6 @@ export interface CardStageProps {
   readonly phase: DrawPhase;
   /** The drawn card, or `null` before the first successful draw. */
   readonly card: TarotCard | null;
-}
-
-/** Formats a deck slug such as `dark_fairytale` for display. */
-function formatDeckName(deck: string): string {
-  return deck
-    .split('_')
-    .filter((part) => part.length > 0)
-    .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
-    .join(' ');
 }
 
 /**

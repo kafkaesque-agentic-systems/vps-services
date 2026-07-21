@@ -318,6 +318,25 @@ These wasted real time; they are environment quirks, not repo problems:
 
 Append discoveries here. Newest first. Date, what happened, what to do differently.
 
+### 2026-07-21 — custom reading page (`/tarot/reading`)
+
+- **Spread response contract:** `POST /tarot/spread` returns the reading as a
+  Go MAP keyed by position — Gin marshals map keys alphabetically, so the
+  client's position ORDER IS DESTROYED in transit. The BFF re-zips the map
+  into an ordered array using the request's own positions list, and position
+  names must be UNIQUE (duplicates silently collapse into one map key; the
+  BFF rejects them case-insensitively).
+- **The UI page had to avoid `/tarot/spread` as a URL** — NGINX prefix-routes
+  it (and anything it string-prefixes, including `/tarot/spreads`) to the Go
+  API. The page lives at `/tarot/reading`.
+- **Known upstream bug (flagged as a task, unfixed):** tarotdb.tdata holds 70
+  docs numbered 1..72 with **9 and 43 missing**, while the Go handler samples
+  a hardcoded 1..69. Result: ~3% of random draws 500 ("deck sample returned
+  no cards"), compounding per position in `deck:"all"` spreads, and decks
+  70-72 are unreachable. Also 70 docs / 69 distinct names — one duplicate.
+- **The product position cap is 10** (Celtic Cross), enforced in the BFF and
+  the composer; the Go API's own cap is 78.
+
 ### 2026-07-20 — tarot front-end (`/tarot`), first new service added
 
 - **New service `tarot-ui`** (container `tarot-frontend`, `172.255.255.7:3000`):

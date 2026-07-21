@@ -103,6 +103,65 @@ export function isReadingResponse(value: unknown): value is ReadingResponse {
   return quote === null || isQuote(quote);
 }
 
+/** One resolved position in a custom spread. */
+export interface SpreadCard {
+  readonly position: string;
+  readonly imageUrl: string;
+}
+
+/**
+ * Body of a successful `POST /tarot/api/spread`.
+ *
+ * `cards` arrives in the ORDER THE POSITIONS WERE REQUESTED -- the BFF
+ * restores it, because the upstream keys the reading by a map and loses it.
+ */
+export interface SpreadReading {
+  readonly name: string;
+  readonly cards: readonly SpreadCard[];
+}
+
+/** Body of a successful `GET /tarot/api/decks`. */
+export interface DeckList {
+  readonly names: readonly string[];
+}
+
+/** Narrows a value to {@link SpreadCard}. */
+function isSpreadCard(value: unknown): value is SpreadCard {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const candidate = value as Record<string, unknown>;
+  return (
+    typeof candidate['position'] === 'string' &&
+    candidate['position'].length > 0 &&
+    typeof candidate['imageUrl'] === 'string' &&
+    candidate['imageUrl'].length > 0
+  );
+}
+
+/** Narrows an untrusted payload to {@link SpreadReading}. */
+export function isSpreadReading(value: unknown): value is SpreadReading {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const candidate = value as Record<string, unknown>;
+  return (
+    typeof candidate['name'] === 'string' &&
+    Array.isArray(candidate['cards']) &&
+    candidate['cards'].length > 0 &&
+    candidate['cards'].every(isSpreadCard)
+  );
+}
+
+/** Narrows an untrusted payload to {@link DeckList}. */
+export function isDeckList(value: unknown): value is DeckList {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const names = (value as Record<string, unknown>)['names'];
+  return Array.isArray(names) && names.every((n) => typeof n === 'string');
+}
+
 /** Narrows an untrusted payload to {@link ErrorResponse}. */
 export function isErrorResponse(value: unknown): value is ErrorResponse {
   if (typeof value !== 'object' || value === null) {
