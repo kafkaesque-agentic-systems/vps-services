@@ -7,17 +7,27 @@
  * boundaries, so even `/tarot/spreads` would be swallowed).
  */
 
-import { useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
+import { CardViewer } from '../components/CardViewer.js';
 import { FlipCard } from '../components/FlipCard.js';
 import { Header } from '../components/Header.js';
 import { MysticButton } from '../components/MysticButton.js';
 import { SpreadComposer } from '../components/SpreadComposer.js';
 import { useSpread } from '../hooks/useSpread.js';
+import type { SpreadCard } from '../types/tarot.js';
 
 /** Renders the custom spread page. */
 export function ReadingPage(): JSX.Element {
   const { phase, reading, turned, error, isDrawing, draw, turn, reset } = useSpread();
+
+  // One slot: only a single card is ever in the floating viewer at a time.
+  const [viewing, setViewing] = useState<SpreadCard | null>(null);
+  // Stable identity so the viewer's focus/scroll-lock effect runs once per
+  // open rather than on every parent render.
+  const closeViewer = useCallback(() => {
+    setViewing(null);
+  }, []);
 
   useEffect(() => {
     document.title = 'ThirdEye — Tarot Reading';
@@ -52,15 +62,28 @@ export function ReadingPage(): JSX.Element {
             <ul className="flex max-w-4xl list-none flex-wrap justify-center gap-x-6 gap-y-8 p-0">
               {reading.cards.map((card) => (
                 <li key={card.position}>
-                  <FlipCard card={card} turned={turned.has(card.position)} onTurn={turn} />
+                  <FlipCard
+                    card={card}
+                    turned={turned.has(card.position)}
+                    onTurn={turn}
+                    onView={setViewing}
+                  />
                 </li>
               ))}
             </ul>
 
-            <MysticButton label="New Reading" onClick={reset} />
+            <MysticButton
+              label="New Reading"
+              onClick={() => {
+                setViewing(null);
+                reset();
+              }}
+            />
           </section>
         )}
       </main>
+
+      {viewing !== null && <CardViewer card={viewing} onClose={closeViewer} />}
 
       <footer className="text-center text-xs tracking-widest text-mist/60 uppercase">
         <p>Compose a custom spread</p>

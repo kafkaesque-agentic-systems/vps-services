@@ -18,25 +18,35 @@ export interface FlipCardProps {
   readonly turned: boolean;
   /** Requests the turn; ignored by the parent once turned. */
   readonly onTurn: (position: string) => void;
+  /** Requests the floating viewer for an already-revealed card. */
+  readonly onView: (card: SpreadCard) => void;
 }
 
-/** Renders a single click-to-turn card with its position label. */
-export function FlipCard({ card, turned, onTurn }: FlipCardProps): JSX.Element {
+/**
+ * Renders a single card with its position label.
+ *
+ * The card is one control with two phases: face down it turns on click; face
+ * up it opens the floating viewer, since the grid renders cards too small to
+ * study in a ten-card spread.
+ */
+export function FlipCard({ card, turned, onTurn, onView }: FlipCardProps): JSX.Element {
   return (
     <div className="flex flex-col items-center">
       <button
         type="button"
         onClick={() => {
-          if (!turned) {
+          if (turned) {
+            onView(card);
+          } else {
             onTurn(card.position);
           }
         }}
         aria-label={
-          turned ? `${card.position}: card revealed` : `Turn the card for ${card.position}`
+          turned
+            ? `View the ${card.position} card in detail`
+            : `Turn the card for ${card.position}`
         }
-        className={`relative aspect-[2/3] w-32 overflow-hidden rounded-xl border bg-obsidian shadow-xl shadow-black/50 transition-colors duration-300 sm:w-36 md:w-40 ${
-          turned ? 'cursor-default border-arcane' : 'cursor-pointer border-arcane hover:border-gilt/50'
-        }`}
+        className="relative aspect-[2/3] w-32 cursor-pointer overflow-hidden rounded-xl border border-arcane bg-obsidian shadow-xl shadow-black/50 transition-colors duration-300 hover:border-gilt/50 sm:w-36 md:w-40"
       >
         <img
           src={CARD_BACK_SRC}

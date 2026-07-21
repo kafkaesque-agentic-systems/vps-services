@@ -50,10 +50,22 @@ export default {
           '0%': { opacity: '0', transform: 'translateY(0.75rem)' },
           '100%': { opacity: '1', transform: 'translateY(0)' },
         },
+        /** Backdrop veil of the floating card viewer. */
+        'fade-veil': {
+          '0%': { opacity: '0' },
+          '100%': { opacity: '1' },
+        },
+        /** The viewed card blooming into the centre. */
+        'bloom-in': {
+          '0%': { opacity: '0', transform: 'scale(0.95)' },
+          '100%': { opacity: '1', transform: 'scale(1)' },
+        },
       },
       animation: {
         'drift-glow': 'drift-glow 7s ease-in-out infinite',
         'rise-in': 'rise-in 600ms ease-out both',
+        'fade-veil': 'fade-veil 250ms ease-out both',
+        'bloom-in': 'bloom-in 350ms ease-out both',
       },
     },
   },
