@@ -5,6 +5,7 @@ import (
 	"errors"
 	"math/rand"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"go.mongodb.org/mongo-driver/bson"
@@ -22,7 +23,39 @@ const (
 	// mode — an unauthenticated resource-exhaustion DoS. No physical tarot
 	// deck exceeds 78 cards, so 78 is a generous, semantically honest limit.
 	maxSpreadPositions = 78
+
+	// legacyImagePrefix is the host baked into every stored card URL. It was
+	// correct when the tarot experience lived on the top-level domain, which
+	// served the images at /static/img; that site is gone, so the stored URLs
+	// no longer resolve. The DATA is left untouched (it will be right again if
+	// the planned move back to the top-level domain restores that path) and
+	// the correction is applied at the response boundary instead.
+	legacyImagePrefix = "https://thirdeye.live/static/img"
+
+	// publicImagePrefix is where the gateway actually serves the images today
+	// (an NGINX alias on the API domain).
+	publicImagePrefix = "https://api.thirdeye.live/image"
 )
+
+// publicImageURL rewrites a stored card URL onto the prefix that currently
+// serves the bytes. URLs already carrying the public prefix — or anything
+// unrecognised — pass through unchanged, so the rewrite is idempotent and
+// safe to retire when the data moves home.
+func publicImageURL(raw string) string {
+	if strings.HasPrefix(raw, legacyImagePrefix) {
+		return publicImagePrefix + strings.TrimPrefix(raw, legacyImagePrefix)
+	}
+	return raw
+}
+
+// publicImageURLs rewrites every card URL in a deck in place and returns the
+// slice for call-site convenience.
+func publicImageURLs(cards []string) []string {
+	for i := range cards {
+		cards[i] = publicImageURL(cards[i])
+	}
+	return cards
+}
 
 // NOTE (Audit C-6): the per-request rand.Seed(time.Now().UnixNano()) calls
 // were removed. Since Go 1.20 the global source is automatically seeded, the
@@ -167,7 +200,7 @@ func (handler *TarotHandler) TarotSpreadHandler(c *gin.Context) {
 				return
 			}
 
-			layout[v] = card[0].Card
+			layout[v] = publicImageURL(card[0].Card)
 
 		}
 
@@ -219,7 +252,7 @@ func (handler *TarotHandler) TarotSpreadHandler(c *gin.Context) {
 		}
 
 		i := rand.Intn(len(deck.Cards))
-		layout[v] = deck.Cards[i]
+		layout[v] = publicImageURL(deck.Cards[i])
 		deck.Cards = utils.RemoveIndex(deck.Cards, i)
 	}
 
@@ -268,6 +301,8 @@ func (handler *TarotHandler) TarotDeckHandler(c *gin.Context) {
 		return
 	}
 
+	deck.Cards = publicImageURLs(deck.Cards)
+
 	c.JSON(http.StatusOK, deck)
 }
 
@@ -309,7 +344,7 @@ func (handler *TarotHandler) RandomCardHandler(c *gin.Context) {
 		// OFF-BY-ONE FIX (Audit C-6): was rand.Intn(len-1), which both
 		// panicked on single-card decks and silently made the LAST card
 		// undrawable. Intn(len) covers the full range safely.
-		Card: deck.Cards[rand.Intn(len(deck.Cards))],
+		Card: publicImageURL(deck.Cards[rand.Intn(len(deck.Cards))]),
 	}
 
 	c.JSON(http.StatusOK, card)
@@ -334,6 +369,8 @@ func (handler *TarotHandler) RandomDeckHandler(c *gin.Context) {
 
 		return
 	}
+
+	deck.Cards = publicImageURLs(deck.Cards)
 
 	c.JSON(http.StatusOK, deck)
 
