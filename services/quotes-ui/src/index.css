@@ -1,0 +1,41 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Global base styling only; component appearance is composed from utilities
+ * in markup. Custom CSS is limited to what utilities cannot express: the
+ * layered page wash and the reduced-motion escape hatch.
+ */
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  body {
+    @apply bg-void text-parchment font-body antialiased;
+    /* Amethyst-forward washes: violet from above, a whisper of gold below. */
+    background-image:
+      radial-gradient(ellipse 85% 55% at 50% -12%, rgba(124, 107, 176, 0.22), transparent 70%),
+      radial-gradient(ellipse 60% 45% at 50% 112%, rgba(216, 180, 90, 0.05), transparent 70%);
+    background-attachment: fixed;
+    min-height: 100vh;
+  }
+
+  /* Keyboard focus must always be plainly visible (WCAG 2.4.7). */
+  :focus-visible {
+    @apply outline-none ring-2 ring-lilac ring-offset-2 ring-offset-void;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

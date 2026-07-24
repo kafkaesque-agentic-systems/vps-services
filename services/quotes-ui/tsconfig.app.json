@@ -1,0 +1,13 @@
+{
+  "//": "Browser/React build. Emits nothing: Vite performs the transform, tsc is used purely as a type gate in `npm run build:client`.",
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "composite": true,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "noEmit": true,
+    "types": ["vite/client"],
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo"
+  },
+  "include": ["src", "vite.config.ts"]
+}

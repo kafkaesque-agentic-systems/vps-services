@@ -1,0 +1,15 @@
+# Never ship the developer machine's install or build output: node_modules is
+# reinstalled inside the image for the correct platform (a macOS-native esbuild
+# binary would break a linux/amd64 build), and dist is rebuilt from source.
+node_modules
+dist
+
+# Local environment and logs
+.env
+.env.*
+*.log
+
+# Editor / OS noise
+.DS_Store
+.vscode
+.idea
