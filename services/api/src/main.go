@@ -77,21 +77,28 @@ func init() {
 
 func main() {
 	router := gin.Default()
-	router.GET("/quote", quoteHandler.RandomQuoteHandler)
-	router.GET("/quote/:id", quoteHandler.GetQuoteHandler)
-	router.GET("/authors", quoteHandler.GetAuthorsHandler)
-	router.GET("/authors/:name", quoteHandler.GetQuotesByAuthorHandler)
-	router.POST("/quote/search", quoteHandler.SearchQuotesHandler)
 
-	router.GET("/tarot/card", tarotHandler.RandomCardHandler)
-	router.GET("/tarot/deck", tarotHandler.RandomDeckHandler)
-	router.GET("/tarot/deck/:id", tarotHandler.TarotDeckHandler)
-	router.GET("/tarot/decks", tarotHandler.ListDecksHandler)
-	router.POST("/tarot/spread", tarotHandler.TarotSpreadHandler)
-
+	// FULL TOKEN GATE (2026-07-23, operator decision): the entire API surface
+	// now sits behind AuthMiddleware — there are NO anonymous endpoints. The
+	// public demonstration lives on the documentation site, whose BFF holds a
+	// service token (API_SERVICE_TOKEN); the tarot experience's BFF likewise.
+	// Anonymous callers receive 401 {"status":401,"error":"missing
+	// credentials"} on every route.
 	authorized := router.Group("/")
 	authorized.Use(authoHandler.AuthMiddleware())
 	{
+		authorized.GET("/quote", quoteHandler.RandomQuoteHandler)
+		authorized.GET("/quote/:id", quoteHandler.GetQuoteHandler)
+		authorized.GET("/authors", quoteHandler.GetAuthorsHandler)
+		authorized.GET("/authors/:name", quoteHandler.GetQuotesByAuthorHandler)
+		authorized.POST("/quote/search", quoteHandler.SearchQuotesHandler)
+
+		authorized.GET("/tarot/card", tarotHandler.RandomCardHandler)
+		authorized.GET("/tarot/deck", tarotHandler.RandomDeckHandler)
+		authorized.GET("/tarot/deck/:id", tarotHandler.TarotDeckHandler)
+		authorized.GET("/tarot/decks", tarotHandler.ListDecksHandler)
+		authorized.POST("/tarot/spread", tarotHandler.TarotSpreadHandler)
+
 		authorized.POST("/quote", quoteHandler.AddQuoteHandler)
 		authorized.PUT("/quote/:id", quoteHandler.UpdateQuoteHandler)
 		authorized.DELETE("/quote/:id", quoteHandler.DeleteQuoteHandler)
