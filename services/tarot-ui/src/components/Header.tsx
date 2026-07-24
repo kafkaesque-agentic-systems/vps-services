@@ -46,7 +46,7 @@ export function Header({ current }: HeaderProps): JSX.Element {
   return (
     <header className="text-center">
       <h1 className="font-display text-3xl tracking-[0.3em] text-parchment uppercase sm:text-4xl">
-        ThirdEye
+        Thirdeye
       </h1>
       <p className="mt-2 text-sm tracking-[0.2em] text-mist uppercase">Tarot</p>
 

@@ -75,6 +75,11 @@ function createApp(config: AppConfig): express.Express {
           frameAncestors: ["'none'"],
           baseUri: ["'self'"],
           formAction: ["'self'"],
+          // Helmet merges its defaults in, including upgrade-insecure-requests
+          // — inert behind the TLS gateway, but it blanks the page on
+          // plain-HTTP localhost in Safari (assets force-upgraded to
+          // https://localhost, TLS failure). Null removes it; see quotes-ui.
+          upgradeInsecureRequests: null,
         },
       },
       // TLS is terminated at NGINX, which owns HSTS for the whole domain.

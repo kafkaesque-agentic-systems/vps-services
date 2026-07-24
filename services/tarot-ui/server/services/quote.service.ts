@@ -42,7 +42,10 @@ export async function fetchRandomQuote(config: AppConfig): Promise<Quote> {
   try {
     response = await fetch(endpoint, {
       signal: controller.signal,
-      headers: { accept: 'application/json' },
+      headers: {
+        accept: 'application/json',
+        ...(config.apiServiceToken === null ? {} : { authorization: config.apiServiceToken }),
+      },
     });
   } catch (cause) {
     const timedOut = cause instanceof Error && cause.name === 'AbortError';

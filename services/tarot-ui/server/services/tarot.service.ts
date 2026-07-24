@@ -81,7 +81,10 @@ export async function fetchRandomCard(config: AppConfig): Promise<TarotCard> {
   try {
     response = await fetch(endpoint, {
       signal: controller.signal,
-      headers: { accept: 'application/json' },
+      headers: {
+        accept: 'application/json',
+        ...(config.apiServiceToken === null ? {} : { authorization: config.apiServiceToken }),
+      },
     });
   } catch (cause) {
     // AbortError is the timeout above; anything else is a transport failure.

@@ -32,6 +32,12 @@ export interface AppConfig {
   readonly publicImagePrefix: string;
   /** Milliseconds before an upstream API request is aborted. */
   readonly upstreamTimeoutMs: number;
+  /**
+   * Service token attached to every upstream API call, or `null` when unset.
+   * Required once the API is fully token-gated; optional so the service also
+   * runs against a public API (and in local development without secrets).
+   */
+  readonly apiServiceToken: string | null;
 }
 
 /** Raised when the environment cannot produce a valid {@link AppConfig}. */
@@ -140,6 +146,7 @@ export function loadConfig(): AppConfig {
       'UPSTREAM_TIMEOUT_MS',
       optional('UPSTREAM_TIMEOUT_MS', '8000'),
     ),
+    apiServiceToken: optional('API_SERVICE_TOKEN', '') || null,
   };
 
   return Object.freeze(config);

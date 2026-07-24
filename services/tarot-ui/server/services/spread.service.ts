@@ -46,7 +46,11 @@ async function upstreamJson<T>(
     response = await fetch(endpoint, {
       ...init,
       signal: controller.signal,
-      headers: { accept: 'application/json', ...init?.headers },
+      headers: {
+        accept: 'application/json',
+        ...(config.apiServiceToken === null ? {} : { authorization: config.apiServiceToken }),
+        ...init?.headers,
+      },
     });
   } catch (cause) {
     const timedOut = cause instanceof Error && cause.name === 'AbortError';

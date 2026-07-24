@@ -30,7 +30,7 @@ export function ReadingPage(): JSX.Element {
   }, []);
 
   useEffect(() => {
-    document.title = 'ThirdEye — Tarot Reading';
+    document.title = 'Thirdeye — Tarot Reading';
   }, []);
 
   return (

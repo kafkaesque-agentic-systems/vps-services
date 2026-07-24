@@ -15,6 +15,10 @@ export default defineConfig({
   plugins: [react()],
   base: process.env['BASE_PATH'] === undefined ? '/tarot/' : `${process.env['BASE_PATH']}/`,
   build: {
+    // Conservative baseline (matches quotes-ui): older Safari parsed the
+    // default-target bundle to a blank page; es2019/safari13 downlevels the
+    // modern syntax involved.
+    target: ['es2019', 'safari13'],
     outDir: 'dist/client',
     emptyOutDir: true,
     sourcemap: false,
