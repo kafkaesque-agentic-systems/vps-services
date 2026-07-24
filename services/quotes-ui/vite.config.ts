@@ -8,9 +8,20 @@ import { defineConfig } from 'vite';
  * defaults to `/`. Output goes to `dist/client`, resolved by the Node server
  * relative to its own compiled location.
  */
+/**
+ * Public base path, normalised. The naive `${BASE_PATH}/` produced `//` when
+ * BASE_PATH itself was `/` (the Docker build arg for this root-mounted app) —
+ * and `//assets/...` is a PROTOCOL-RELATIVE URL, so browsers resolved the
+ * bundle against the host "assets" and the live page rendered blank with CSP
+ * refusals for https://assets/... . Root stays exactly '/'; sub-paths gain
+ * exactly one trailing slash.
+ */
+const RAW_BASE = process.env['BASE_PATH'] ?? '/';
+const BASE = RAW_BASE === '/' ? '/' : `${RAW_BASE.replace(/\/+$/, '')}/`;
+
 export default defineConfig({
   plugins: [react()],
-  base: process.env['BASE_PATH'] === undefined ? '/' : `${process.env['BASE_PATH']}/`,
+  base: BASE,
   build: {
     // Conservative baseline: a blank page in an older Safari (module parses,
     // React never commits) traced to modern syntax in the default 'modules'

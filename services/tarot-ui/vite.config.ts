@@ -11,9 +11,18 @@ import { defineConfig } from 'vite';
  * Output goes to `dist/client`, which the Node server resolves relative to its
  * own compiled location (`dist/server/index.js`).
  */
+/**
+ * Public base path, normalised the same way as quotes-ui: a BASE_PATH of `/`
+ * must yield `/`, not the protocol-relative `//` (see quotes-ui, where that
+ * produced //assets/... URLs and a blank page). This app's default is a
+ * sub-path, but the guard costs nothing and protects future re-mounting.
+ */
+const RAW_BASE = process.env['BASE_PATH'] ?? '/tarot';
+const BASE = RAW_BASE === '/' ? '/' : `${RAW_BASE.replace(/\/+$/, '')}/`;
+
 export default defineConfig({
   plugins: [react()],
-  base: process.env['BASE_PATH'] === undefined ? '/tarot/' : `${process.env['BASE_PATH']}/`,
+  base: BASE,
   build: {
     // Conservative baseline (matches quotes-ui): older Safari parsed the
     // default-target bundle to a blank page; es2019/safari13 downlevels the
