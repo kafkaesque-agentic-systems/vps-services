@@ -318,6 +318,36 @@ These wasted real time; they are environment quirks, not repo problems:
 
 Append discoveries here. Newest first. Date, what happened, what to do differently.
 
+### 2026-07-23 — full API token gate + docs site replaces Flask (`e2e9922`…`21eeff1`)
+
+- **The API has NO anonymous endpoints anymore.** Every route (quotes, tarot,
+  search, everything) requires a token validated against `qdb.users`. The two
+  front-end BFFs hold a service identity — `API_SERVICE_TOKEN` in `.environs`
+  — and are the only anonymous doors. ⚠️ That token is currently the
+  OPERATOR'S PERSONAL token: rotating it breaks both UIs until `.environs`
+  is updated. A dedicated service user (via `user_provision`, needs
+  `MCP_DB_ALLOW_WRITES=true` temporarily) is the eventual clean fix.
+- **`quotes-ui` (React/TS/Node, `172.255.255.8`) now serves the domain root**
+  — two documentation pages (`/` quotes, `/docs/tarot` tarot). The tarot docs
+  path deliberately avoids the `/tarot` string prefix (NGINX would swallow
+  even `/tarot-docs`). The **Flask tier (`quotes-frontend`) is UNROUTED BUT
+  RUNNING** for rollback: revert = point `location /` back to
+  `172.255.255.4:5000` + recreate the proxy. Archive of `services/web/`
+  is pending after the soak.
+- **helmet gotcha:** custom CSP directives MERGE with helmet's defaults,
+  which include `upgrade-insecure-requests` — inert behind the TLS gateway
+  but it blanks the page on plain-HTTP localhost in Safari (assets
+  force-upgraded to https; Chromium exempts localhost and hides the bug).
+  Both UIs now null it explicitly.
+- **Both UIs build to `es2019`/`safari13`** so older engines can't
+  parse-fail the bundle into a blank page.
+- **Go API emits corrected tarot image URLs itself now** (`added5b`); the
+  tarot BFF's idempotent rewrite became a harmless no-op, kept as defence.
+- **Stated future direction:** the tarot experience pages move to the
+  top-level `thirdeye.live` once its (currently expired) TLS cert is renewed;
+  the API domain keeps the documentation site. The stored card-image URLs
+  become valid again if that move restores `/static/img`.
+
 ### 2026-07-21 — custom reading page (`/tarot/reading`)
 
 - **Spread response contract:** `POST /tarot/spread` returns the reading as a
