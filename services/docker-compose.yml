@@ -80,6 +80,39 @@ services:
       quotes:
         ipv4_address: 172.255.255.4
 
+  # Quotes / API-reference front-end: React client served by a typed Node BFF.
+  #
+  # Replaces the Flask quotes-web tier at the domain root once NGINX's
+  # `location /` is switched to this service (staged cutover; the Flask
+  # container stays running-but-unrouted for instant rollback until the soak
+  # completes). Holds the service identity (API_SERVICE_TOKEN) that lets the
+  # reference page demonstrate the token-gated API to anonymous visitors.
+  quotes-ui:
+    image: quotes-ui:latest
+    container_name: quotes-ui
+    build:
+      context: ./quotes-ui
+      args:
+        BASE_PATH: /
+    restart: unless-stopped
+    environment:
+      - QUOTES_API_BASE_URL=http://172.255.255.3:8080
+      - BASE_PATH=/
+      - NODE_ENV=production
+      - PORT=3000
+      # Admin secret for the token-request check (same variable the Flask
+      # tier used) and the service token for upstream API calls.
+      - AUTHORIZED
+      - API_SERVICE_TOKEN
+      # SMTP credentials for the token-request notification (Flask parity).
+      - MAILSERVER
+      - MAILPASS
+    depends_on:
+      - api
+    networks:
+      quotes:
+        ipv4_address: 172.255.255.8
+
   # Tarot front-end: React client served by a typed Node BFF.
   #
   # The browser talks only to this service; it proxies the Go API internally, so
@@ -113,6 +146,8 @@ services:
       # Overridable without a rebuild if the upstream is ever fixed.
       - UPSTREAM_IMAGE_PREFIX=https://thirdeye.live/static/img
       - PUBLIC_IMAGE_PREFIX=https://api.thirdeye.live/image
+      # Service identity for the token-gated API.
+      - API_SERVICE_TOKEN
     depends_on:
       - api
     # Deliberately NOT published to the host: the gateway is the only ingress.
